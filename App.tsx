@@ -1,9 +1,10 @@
-import { View, Text } from 'react-native';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
+import AppNavigator from './src/navigation/AppNavigator';
 
 export default function App() {
   return (
-    <View className="flex-1 items-center justify-center bg-white">
-      <Text className="text-2xl font-bold text-gray-900">¡Hola! 👋</Text>
-    </View>
+    <SafeAreaProvider>
+      <AppNavigator />
+    </SafeAreaProvider>
   );
 }
