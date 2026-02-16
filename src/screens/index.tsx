@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { useScheduleStore, SCHEDULE_COLORS } from '../store/schedule.store';
 import type { ScheduleBlock } from '../store/schedule.store';
+import { useTasksStore, PRIORITY_CONFIG as TASK_PRIORITY } from '../store/tasks.store';
 
 const DAYS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const FULL_DAYS = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
@@ -82,6 +83,7 @@ export default function Home() {
   ).current;
 
   const { blocks, addBlock, updateBlock, removeBlock, toggleCompleted } = useScheduleStore();
+  const { tasks: allTasks } = useTasksStore();
   const scrollRef = useRef<ScrollView>(null);
 
   // Actualizar reloj cada minuto
@@ -104,6 +106,21 @@ export default function Home() {
       .filter((b) => b.dayIndex === selectedDay)
       .sort((a, b) => a.startHour - b.startHour);
   }, [blocks, selectedDay]);
+
+  // Scheduled tasks for selected day
+  const scheduledTasksForDay = useMemo(() => {
+    return allTasks
+      .filter((t) => {
+        if (!t.scheduledTimestamp || t.completed) return false;
+        const d = new Date(t.scheduledTimestamp);
+        return d.getDay() === selectedDay;
+      })
+      .map((t) => {
+        const d = new Date(t.scheduledTimestamp!);
+        return { ...t, hour: d.getHours() + d.getMinutes() / 60 };
+      })
+      .sort((a, b) => a.hour - b.hour);
+  }, [allTasks, selectedDay]);
 
   const hours = useMemo(() => {
     const arr: number[] = [];
@@ -133,11 +150,36 @@ export default function Home() {
   const weather = getWeatherIcon();
 
   const nextBlock = useMemo(() => {
+    // Schedule blocks
     const todayBlocks = blocks
       .filter((b) => b.dayIndex === now.current.getDay())
       .sort((a, b) => a.startHour - b.startHour);
-    return todayBlocks.find((b) => b.startHour > currentHourDecimal);
-  }, [blocks, currentHourDecimal]);
+    const nextB = todayBlocks.find((b) => b.startHour > currentHourDecimal);
+
+    // Scheduled tasks (as virtual blocks)
+    const taskBlocks = allTasks
+      .filter((t) => {
+        if (!t.scheduledTimestamp || t.completed) return false;
+        const d = new Date(t.scheduledTimestamp);
+        return d.getDay() === now.current.getDay();
+      })
+      .map((t) => {
+        const d = new Date(t.scheduledTimestamp!);
+        return {
+          id: t.id,
+          title: `📝 ${t.title}`,
+          startHour: d.getHours() + d.getMinutes() / 60,
+          duration: 1,
+          dayIndex: now.current.getDay(),
+          color: '#f3f4f6',
+          type: 'other' as const,
+          completed: false,
+        };
+      });
+
+    const all = [...todayBlocks, ...taskBlocks].sort((a, b) => a.startHour - b.startHour);
+    return all.find((b) => b.startHour > currentHourDecimal);
+  }, [blocks, allTasks, currentHourDecimal]);
 
   // "A Continuación" - tiempo restante
   const upNextData = useMemo(() => {
@@ -434,6 +476,31 @@ export default function Home() {
                     <Text style={styles.prepAdd}>+</Text>
                   </View>
                 </TouchableOpacity>
+              );
+            }
+
+            // Scheduled task at this hour
+            const scheduledTask = scheduledTasksForDay.find((t) => Math.floor(t.hour) === hour);
+            if (scheduledTask) {
+              const taskPriConfig = TASK_PRIORITY[scheduledTask.priority];
+              return (
+                <View key={hour} style={styles.scheduledTaskBlock}>
+                  <Text style={styles.freeHourLabel}>{formatHour(hour)}</Text>
+                  <View style={[styles.scheduledTaskCard, { borderLeftColor: taskPriConfig.color }]}>
+                    <Text style={{ fontSize: 16 }}>📝</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.scheduledTaskTitle}>{scheduledTask.title}</Text>
+                      <Text style={styles.scheduledTaskSub}>
+                        Tarea · {taskPriConfig.label}
+                      </Text>
+                    </View>
+                    <View style={[styles.scheduledTaskPriBadge, { backgroundColor: taskPriConfig.bg }]}>
+                      <Text style={{ fontSize: 10, fontWeight: '800', color: taskPriConfig.color }}>
+                        {taskPriConfig.icon}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
               );
             }
 
@@ -1208,5 +1275,44 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: '#ffffff',
+  },
+  // Scheduled task in timeline
+  scheduledTaskBlock: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: 64,
+    paddingHorizontal: 4,
+    paddingVertical: 4,
+  },
+  scheduledTaskCard: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderRadius: 12,
+    borderLeftWidth: 4,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    gap: 10,
+    elevation: 2,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+  },
+  scheduledTaskTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#1f2937',
+  },
+  scheduledTaskSub: {
+    fontSize: 11,
+    color: '#6b7280',
+    marginTop: 2,
+  },
+  scheduledTaskPriBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
   },
 });

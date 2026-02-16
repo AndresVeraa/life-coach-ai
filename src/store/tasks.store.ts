@@ -13,6 +13,7 @@ export interface Task {
   priority: Priority;
   tag: Tag;
   createdAt: number;
+  scheduledTimestamp?: number;
 }
 
 // --- Visual configs ---
@@ -40,6 +41,8 @@ interface TasksState {
   addTask: (title: string, priority: Priority, tag: Tag) => void;
   toggleTask: (id: string) => void;
   removeTask: (id: string) => void;
+  scheduleTask: (id: string, timestamp: number) => void;
+  unscheduleTask: (id: string) => void;
   clearCompleted: () => void;
 }
 
@@ -73,6 +76,20 @@ export const useTasksStore = create<TasksState>()(
       removeTask: (id) =>
         set((state) => ({
           tasks: state.tasks.filter((t) => t.id !== id),
+        })),
+
+      scheduleTask: (id, timestamp) =>
+        set((state) => ({
+          tasks: state.tasks.map((t) =>
+            t.id === id ? { ...t, scheduledTimestamp: timestamp } : t
+          ),
+        })),
+
+      unscheduleTask: (id) =>
+        set((state) => ({
+          tasks: state.tasks.map((t) =>
+            t.id === id ? { ...t, scheduledTimestamp: undefined } : t
+          ),
         })),
 
       clearCompleted: () =>
