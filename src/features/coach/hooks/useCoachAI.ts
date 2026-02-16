@@ -8,8 +8,7 @@ import { callAI, AIMessage } from '@/services/api/aiService';
 import { COACH_SYSTEM_PROMPT, selectCoachPrompt } from '../services/coachPrompts';
 
 export function useCoachAI() {
-  const { addMessage, currentMessages, setLoading, createSession, currentSessionId } =
-    useCoachStore();
+  const { addMessage, messages, setLoading } = useCoachStore();
   const { userStats } = useAppContext();
   const { tasks } = useTaskStore();
   const { metrics } = useHealthStore();
@@ -17,9 +16,7 @@ export function useCoachAI() {
 
   // Crear sesión si no existe
   useEffect(() => {
-    if (!currentSessionId) {
-      createSession();
-    }
+    // Sesión se maneja automáticamente en el store
   }, []);
 
   /**
@@ -58,7 +55,7 @@ export function useCoachAI() {
       const cleanMessage = userMessage.trim();
 
       // 1. Agregar mensaje del usuario al chat
-      addMessage('user', cleanMessage);
+      addMessage(cleanMessage, 'user');
       setLoading(true);
 
       try {
@@ -75,10 +72,10 @@ export function useCoachAI() {
         ];
 
         // Incluir historial de conversación (últimos 5 mensajes para context window)
-        if (currentMessages.length > 0) {
-          const conversationHistory = currentMessages.slice(-5).map((msg) => ({
+        if (messages.length > 0) {
+          const conversationHistory = messages.slice(-5).map((msg: any) => ({
             role: msg.role,
-            content: msg.content,
+            content: msg.text,
           }));
 
           messages.unshift(...conversationHistory);
@@ -89,28 +86,28 @@ export function useCoachAI() {
 
         // 5. Manejar respuesta
         if (response.success && response.content) {
-          addMessage('assistant', response.content);
+          addMessage(response.content, 'assistant');
         } else {
           const errorMessage =
             response.error ||
             'Hubo un problema conectando con el Coach. Intenta de nuevo.';
-          addMessage('assistant', `❌ ${errorMessage}`);
+          addMessage(`❌ ${errorMessage}`, 'assistant');
         }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
-        addMessage('assistant', `❌ Error: ${errorMessage}`);
+        addMessage(`❌ Error: ${errorMessage}`, 'assistant');
       } finally {
         setLoading(false);
       }
     },
-    [addMessage, setLoading, enrichedUserStats, auditContext, currentMessages]
+    [addMessage, setLoading, enrichedUserStats, auditContext, messages]
   );
 
   /**
    * Iniciar conversación con saludo personalizado
    */
   const startConversation = useCallback(async () => {
-    if (currentMessages.length > 0) return; // Ya hay conversación
+    if (messages.length > 0) return; // Ya hay conversación
 
     setLoading(true);
 
@@ -127,17 +124,17 @@ export function useCoachAI() {
         greeting = `Noto que tienes muchas distracciones (Focus: ${auditContext.focusScore}/100). Hoy vamos a trabajar en recuperar tu enfoque. ¿Empezamos?`;
       }
 
-      addMessage('assistant', greeting);
+      addMessage(greeting, 'assistant');
     } finally {
       setLoading(false);
     }
-  }, [currentMessages.length, enrichedUserStats, auditContext, addMessage, setLoading]);
+  }, [messages.length, enrichedUserStats, auditContext, addMessage, setLoading]);
 
   return {
     sendMessage,
     startConversation,
     enrichedUserStats,
-    messages: currentMessages,
+    messages: messages,
   };
 }
 
