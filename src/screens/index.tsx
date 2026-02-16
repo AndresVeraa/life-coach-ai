@@ -121,12 +121,52 @@ export default function Home() {
   const currentHourDecimal = currentTime.getHours() + currentTime.getMinutes() / 60;
   const isToday = selectedDay === now.current.getDay();
 
+  // Clima simulado según hora
+  const getWeatherIcon = () => {
+    const h = currentTime.getHours();
+    if (h >= 6 && h < 10) return { icon: '🌤️', temp: '18°' };
+    if (h >= 10 && h < 14) return { icon: '☀️', temp: '24°' };
+    if (h >= 14 && h < 18) return { icon: '⛅', temp: '22°' };
+    if (h >= 18 && h < 21) return { icon: '🌇', temp: '19°' };
+    return { icon: '🌙', temp: '15°' };
+  };
+  const weather = getWeatherIcon();
+
   const nextBlock = useMemo(() => {
     const todayBlocks = blocks
       .filter((b) => b.dayIndex === now.current.getDay())
       .sort((a, b) => a.startHour - b.startHour);
     return todayBlocks.find((b) => b.startHour > currentHourDecimal);
   }, [blocks, currentHourDecimal]);
+
+  // "A Continuación" - tiempo restante
+  const upNextData = useMemo(() => {
+    if (!nextBlock || !isToday) return null;
+    const minutesLeft = Math.round((nextBlock.startHour - currentHourDecimal) * 60);
+    if (minutesLeft <= 0) return null;
+    const hrs = Math.floor(minutesLeft / 60);
+    const mins = minutesLeft % 60;
+    const timeStr = hrs > 0 ? `${hrs}h ${mins}min` : `${mins} min`;
+    return { block: nextBlock, timeStr, minutesLeft };
+  }, [nextBlock, currentHourDecimal, isToday]);
+
+  // Sugerencias de estudio: huecos libres de 1-2h antes de una clase
+  const prepSuggestions = useMemo(() => {
+    const suggestions: { hour: number; className: string; classColor: string }[] = [];
+    dayBlocks.forEach((b) => {
+      if (b.type !== 'class') return;
+      // Buscar si la hora anterior está libre
+      const prevHour = Math.floor(b.startHour) - 1;
+      if (prevHour < HOURS_START) return;
+      const occupied = dayBlocks.some(
+        (other) => prevHour >= other.startHour && prevHour < other.startHour + other.duration
+      );
+      if (!occupied) {
+        suggestions.push({ hour: prevHour, className: b.title, classColor: b.color });
+      }
+    });
+    return suggestions;
+  }, [dayBlocks]);
 
   const getBlockAtHour = (hour: number): ScheduleBlock | undefined => {
     return dayBlocks.find(
@@ -234,7 +274,7 @@ export default function Home() {
       <View style={styles.header}>
         <View style={styles.headerTopRow}>
           <View>
-            <Text style={styles.greeting}>{getGreeting()}</Text>
+            <Text style={styles.greeting}>{getGreeting()} {weather.icon} {weather.temp}</Text>
             <Text style={styles.headerTitle}>📅 Mi Agenda</Text>
           </View>
           <View style={styles.clockBadge}>
@@ -249,17 +289,6 @@ export default function Home() {
           })}
         </Text>
       </View>
-
-      {/* Próxima clase */}
-      {nextBlock && isToday && (
-        <View style={styles.nextClassCard}>
-          <Text style={styles.nextClassLabel}>⏰ Próximo</Text>
-          <Text style={styles.nextClassName}>{nextBlock.title}</Text>
-          <Text style={styles.nextClassTime}>
-            {formatHour(nextBlock.startHour)} - {formatHour(nextBlock.startHour + nextBlock.duration)}
-          </Text>
-        </View>
-      )}
 
       {/* Selector de días */}
       <View style={styles.daySelector}>
@@ -385,7 +414,29 @@ export default function Home() {
               );
             }
 
-            // Hora libre
+            // Hora libre - ¿hay sugerencia de prep?
+            const prep = prepSuggestions.find((s) => s.hour === hour);
+            if (prep) {
+              return (
+                <TouchableOpacity
+                  key={hour}
+                  onPress={() => openAddModal(hour)}
+                  style={styles.blockPrep}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.prepHourLabel}>{formatHour(hour)}</Text>
+                  <View style={[styles.prepCard, { borderColor: prep.classColor }]}>
+                    <Text style={styles.prepIcon}>📖</Text>
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.prepTitle}>Preparar {prep.className}</Text>
+                      <Text style={styles.prepSubtitle}>⚡ Repaso rápido antes de clase</Text>
+                    </View>
+                    <Text style={styles.prepAdd}>+</Text>
+                  </View>
+                </TouchableOpacity>
+              );
+            }
+
             return (
               <TouchableOpacity
                 key={hour}
@@ -411,6 +462,25 @@ export default function Home() {
         </View>
       </ScrollView>
       </View>
+
+      {/* Widget "A Continuación" */}
+      {upNextData && (
+        <View style={styles.upNextWidget}>
+          <View style={styles.upNextLeft}>
+            <Text style={styles.upNextLabel}>A CONTINUACIÓN</Text>
+            <Text style={styles.upNextName} numberOfLines={1}>{upNextData.block.title}</Text>
+            <Text style={styles.upNextTime}>
+              {formatHour(upNextData.block.startHour)} → {formatHour(upNextData.block.startHour + upNextData.block.duration)}
+            </Text>
+          </View>
+          <View style={styles.upNextRight}>
+            <Text style={styles.upNextCountdown}>{upNextData.timeStr}</Text>
+            <Text style={styles.upNextCountdownLabel}>
+              {upNextData.minutesLeft <= 15 ? '🔴 ¡Ya casi!' : upNextData.minutesLeft <= 60 ? '🟡 Pronto' : '🟢 Relax'}
+            </Text>
+          </View>
+        </View>
+      )}
 
       {/* Modal para agregar/editar bloque */}
       <Modal
@@ -751,6 +821,8 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     marginBottom: 2,
     justifyContent: 'space-between',
+    borderLeftWidth: 4,
+    borderLeftColor: 'rgba(0,0,0,0.15)',
   },
   blockRow: {
     flexDirection: 'row',
@@ -997,6 +1069,99 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '900',
     color: '#374151',
+  },
+  // Prep suggestion blocks
+  blockPrep: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: HOUR_HEIGHT,
+    paddingHorizontal: 4,
+  },
+  prepHourLabel: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#8b5cf6',
+    width: 44,
+  },
+  prepCard: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#faf5ff',
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    gap: 8,
+  },
+  prepIcon: {
+    fontSize: 18,
+  },
+  prepTitle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#6d28d9',
+  },
+  prepSubtitle: {
+    fontSize: 10,
+    color: '#8b5cf6',
+    marginTop: 1,
+  },
+  prepAdd: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#c4b5fd',
+  },
+  // Up Next widget
+  upNextWidget: {
+    flexDirection: 'row',
+    backgroundColor: '#1f2937',
+    marginHorizontal: 12,
+    borderRadius: 16,
+    padding: 14,
+    alignItems: 'center',
+    marginBottom: 4,
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+  },
+  upNextLeft: {
+    flex: 1,
+  },
+  upNextLabel: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: '#9ca3af',
+    letterSpacing: 1,
+  },
+  upNextName: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: '#ffffff',
+    marginTop: 2,
+  },
+  upNextTime: {
+    fontSize: 12,
+    color: '#9ca3af',
+    marginTop: 2,
+  },
+  upNextRight: {
+    alignItems: 'flex-end',
+    marginLeft: 12,
+  },
+  upNextCountdown: {
+    fontSize: 20,
+    fontWeight: '900',
+    color: '#60a5fa',
+    fontVariant: ['tabular-nums'],
+  },
+  upNextCountdownLabel: {
+    fontSize: 10,
+    color: '#9ca3af',
+    marginTop: 2,
   },
   durationPreview: {
     fontSize: 13,
