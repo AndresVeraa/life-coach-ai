@@ -5,17 +5,20 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 export interface ScheduleBlock {
   id: string;
   dayIndex: number; // 0 = Domingo, 1 = Lunes, ... 6 = Sábado
-  startHour: number; // Ej: 9 para 09:00
+  startHour: number; // Ej: 9.5 para 09:30
   duration: number; // en horas (1, 1.5, 2, etc.)
   title: string;
   color: string;
   type: 'class' | 'work' | 'other';
+  completed: boolean;
 }
 
 interface ScheduleState {
   blocks: ScheduleBlock[];
   addBlock: (block: Omit<ScheduleBlock, 'id'>) => void;
+  updateBlock: (id: string, updates: Partial<Omit<ScheduleBlock, 'id'>>) => void;
   removeBlock: (id: string) => void;
+  toggleCompleted: (id: string) => void;
   getBlocksForDay: (dayIndex: number) => ScheduleBlock[];
 }
 
@@ -44,9 +47,23 @@ export const useScheduleStore = create<ScheduleState>()(
           ],
         })),
 
+      updateBlock: (id, updates) =>
+        set((state) => ({
+          blocks: state.blocks.map((b) =>
+            b.id === id ? { ...b, ...updates } : b
+          ),
+        })),
+
       removeBlock: (id) =>
         set((state) => ({
           blocks: state.blocks.filter((b) => b.id !== id),
+        })),
+
+      toggleCompleted: (id) =>
+        set((state) => ({
+          blocks: state.blocks.map((b) =>
+            b.id === id ? { ...b, completed: !b.completed } : b
+          ),
         })),
 
       getBlocksForDay: (dayIndex) => {
