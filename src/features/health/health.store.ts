@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { SleepRecord, HealthMetrics, HealthState } from './types';
+import { SleepRecord, HealthMetrics, HealthState, SleepLog } from './types';
 
 // Helper: calcular horas de sueño entre dos strings HH:MM
 function calculateSleepHours(timeIn: string, timeOut: string): number {
@@ -102,6 +102,71 @@ export const useHealthStore = create<HealthState>()(
       metrics: calculateMetrics([]),
       last7Days: [],
 
+      // --- Circadian Rhythm State ---
+      targetWakeTime: '07:00',
+      targetBedTime: '23:00',
+      wakeAlarmEnabled: false,
+      bedAlarmEnabled: false,
+      sleepLogs: [],
+
+      // --- Circadian Rhythm Actions ---
+      setTargets: (wake: string, bed: string) =>
+        set({ targetWakeTime: wake, targetBedTime: bed }),
+
+      toggleAlarm: (type: 'wake' | 'bed') =>
+        set((state) => ({
+          wakeAlarmEnabled: type === 'wake' ? !state.wakeAlarmEnabled : state.wakeAlarmEnabled,
+          bedAlarmEnabled: type === 'bed' ? !state.bedAlarmEnabled : state.bedAlarmEnabled,
+        })),
+
+      logAction: (type: 'wake' | 'sleep') =>
+        set((state) => {
+          const today = getISODate();
+          const now = new Date();
+          const timeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+
+          const existingIndex = state.sleepLogs.findIndex((l) => l.date === today);
+          const updatedLogs = [...state.sleepLogs];
+
+          if (existingIndex >= 0) {
+            const existing = { ...updatedLogs[existingIndex] };
+            if (type === 'wake') existing.wakeTime = timeStr;
+            else existing.bedTime = timeStr;
+            updatedLogs[existingIndex] = existing;
+          } else {
+            const newLog: SleepLog = {
+              date: today,
+              ...(type === 'wake' ? { wakeTime: timeStr } : { bedTime: timeStr }),
+            };
+            updatedLogs.unshift(newLog);
+          }
+
+          return { sleepLogs: updatedLogs };
+        }),
+
+      updateLog: (date: string, field: 'wakeTime' | 'bedTime', value: string) =>
+        set((state) => {
+          const idx = state.sleepLogs.findIndex((l) => l.date === date);
+          if (idx < 0) return state;
+          const updatedLogs = [...state.sleepLogs];
+          updatedLogs[idx] = { ...updatedLogs[idx], [field]: value };
+          return { sleepLogs: updatedLogs };
+        }),
+
+      getTodayLog: () => {
+        const today = getISODate();
+        return get().sleepLogs.find((l) => l.date === today);
+      },
+
+      getWeekLogs: () => {
+        const logs = get().sleepLogs;
+        const weekAgo = new Date();
+        weekAgo.setDate(weekAgo.getDate() - 7);
+        const weekAgoStr = getISODate(weekAgo);
+        return logs.filter((l) => l.date >= weekAgoStr);
+      },
+
+      // --- Sleep Records Actions ---
       addSleepRecord: (record) =>
         set((state) => {
           const newRecord: SleepRecord = {
@@ -168,7 +233,7 @@ export const useHealthStore = create<HealthState>()(
         }),
     }),
     {
-      name: 'health-storage',
+      name: 'health-v2-storage',
       storage: createJSONStorage(() => AsyncStorage),
     }
   )

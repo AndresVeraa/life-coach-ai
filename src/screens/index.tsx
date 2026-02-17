@@ -14,7 +14,7 @@ import {
 } from 'react-native';
 import { useScheduleStore, SCHEDULE_COLORS } from '../store/schedule.store';
 import type { ScheduleBlock } from '../store/schedule.store';
-import { useTasksStore, PRIORITY_CONFIG as TASK_PRIORITY } from '../store/tasks.store';
+import { useTasksStore, PRIORITY_CONFIG as TASK_PRIORITY, CATEGORY_CONFIG, timeToDecimal } from '../store/tasks.store';
 
 const DAYS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const FULL_DAYS = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
@@ -107,19 +107,38 @@ export default function Home() {
       .sort((a, b) => a.startHour - b.startHour);
   }, [blocks, selectedDay]);
 
-  // Scheduled tasks for selected day
+  // Scheduled tasks + habits with reminderTime for selected day
   const scheduledTasksForDay = useMemo(() => {
-    return allTasks
-      .filter((t) => {
-        if (!t.scheduledTimestamp || t.completed) return false;
+    const items: (typeof allTasks[number] & { hour: number; isHabit?: boolean })[] = [];
+
+    allTasks.forEach((t) => {
+      if (t.completed) return;
+
+      // Tasks with scheduledTimestamp (one-off calendar placement)
+      if (t.scheduledTimestamp) {
         const d = new Date(t.scheduledTimestamp);
-        return d.getDay() === selectedDay;
-      })
-      .map((t) => {
-        const d = new Date(t.scheduledTimestamp!);
-        return { ...t, hour: d.getHours() + d.getMinutes() / 60 };
-      })
-      .sort((a, b) => a.hour - b.hour);
+        if (d.getDay() === selectedDay) {
+          items.push({ ...t, hour: d.getHours() + d.getMinutes() / 60 });
+        }
+        return;
+      }
+
+      // Habits with reminderTime that are active on selectedDay
+      if (t.reminderTime) {
+        let showOnDay = false;
+        if (t.frequency === 'daily') showOnDay = true;
+        else if (t.frequency === 'custom' && t.repeatDays) {
+          showOnDay = t.repeatDays.includes(selectedDay);
+        } else if (t.frequency === 'once') {
+          showOnDay = new Date(t.createdAt).getDay() === selectedDay;
+        }
+        if (showOnDay) {
+          items.push({ ...t, hour: timeToDecimal(t.reminderTime), isHabit: true });
+        }
+      }
+    });
+
+    return items.sort((a, b) => a.hour - b.hour);
   }, [allTasks, selectedDay]);
 
   const hours = useMemo(() => {
@@ -156,22 +175,38 @@ export default function Home() {
       .sort((a, b) => a.startHour - b.startHour);
     const nextB = todayBlocks.find((b) => b.startHour > currentHourDecimal);
 
-    // Scheduled tasks (as virtual blocks)
+    // Scheduled tasks + habits as virtual blocks
     const taskBlocks = allTasks
       .filter((t) => {
-        if (!t.scheduledTimestamp || t.completed) return false;
-        const d = new Date(t.scheduledTimestamp);
-        return d.getDay() === now.current.getDay();
+        if (t.completed) return false;
+        if (t.scheduledTimestamp) {
+          return new Date(t.scheduledTimestamp).getDay() === now.current.getDay();
+        }
+        if (t.reminderTime) {
+          if (t.frequency === 'daily') return true;
+          if (t.frequency === 'custom' && t.repeatDays)
+            return t.repeatDays.includes(now.current.getDay());
+          if (t.frequency === 'once')
+            return new Date(t.createdAt).getDay() === now.current.getDay();
+        }
+        return false;
       })
       .map((t) => {
-        const d = new Date(t.scheduledTimestamp!);
+        let startHour: number;
+        if (t.scheduledTimestamp) {
+          const d = new Date(t.scheduledTimestamp);
+          startHour = d.getHours() + d.getMinutes() / 60;
+        } else {
+          startHour = t.reminderTime ? timeToDecimal(t.reminderTime) : 8;
+        }
+        const cat = t.category ? CATEGORY_CONFIG[t.category] : null;
         return {
           id: t.id,
-          title: `📝 ${t.title}`,
-          startHour: d.getHours() + d.getMinutes() / 60,
-          duration: 1,
+          title: `${cat ? cat.icon : '📝'} ${t.title}`,
+          startHour,
+          duration: 0.5,
           dayIndex: now.current.getDay(),
-          color: '#f3f4f6',
+          color: cat ? cat.bg : '#f3f4f6',
           type: 'other' as const,
           completed: false,
         };
@@ -479,24 +514,34 @@ export default function Home() {
               );
             }
 
-            // Scheduled task at this hour
+            // Scheduled task or habit at this hour
             const scheduledTask = scheduledTasksForDay.find((t) => Math.floor(t.hour) === hour);
             if (scheduledTask) {
+              const isHabit = (scheduledTask as any).isHabit;
+              const cat = scheduledTask.category ? CATEGORY_CONFIG[scheduledTask.category] : null;
               const taskPriConfig = TASK_PRIORITY[scheduledTask.priority];
+              const borderColor = isHabit && cat ? cat.color : taskPriConfig.color;
+              const icon = isHabit && cat ? cat.icon : '📝';
+              const subtitle = isHabit
+                ? `Hábito · ${cat ? cat.label : ''} · ⏰ ${scheduledTask.reminderTime}`
+                : `Tarea · ${taskPriConfig.label}`;
+              const badgeBg = isHabit && cat ? cat.bg : taskPriConfig.bg;
+              const badgeColor = isHabit && cat ? cat.color : taskPriConfig.color;
+              const badgeIcon = isHabit ? '🌱' : taskPriConfig.icon;
               return (
                 <View key={hour} style={styles.scheduledTaskBlock}>
                   <Text style={styles.freeHourLabel}>{formatHour(hour)}</Text>
-                  <View style={[styles.scheduledTaskCard, { borderLeftColor: taskPriConfig.color }]}>
-                    <Text style={{ fontSize: 16 }}>📝</Text>
+                  <View style={[styles.scheduledTaskCard, { borderLeftColor: borderColor }]}>
+                    <Text style={{ fontSize: 16 }}>{icon}</Text>
                     <View style={{ flex: 1 }}>
                       <Text style={styles.scheduledTaskTitle}>{scheduledTask.title}</Text>
                       <Text style={styles.scheduledTaskSub}>
-                        Tarea · {taskPriConfig.label}
+                        {subtitle}
                       </Text>
                     </View>
-                    <View style={[styles.scheduledTaskPriBadge, { backgroundColor: taskPriConfig.bg }]}>
-                      <Text style={{ fontSize: 10, fontWeight: '800', color: taskPriConfig.color }}>
-                        {taskPriConfig.icon}
+                    <View style={[styles.scheduledTaskPriBadge, { backgroundColor: badgeBg }]}>
+                      <Text style={{ fontSize: 10, fontWeight: '800', color: badgeColor }}>
+                        {badgeIcon}
                       </Text>
                     </View>
                   </View>

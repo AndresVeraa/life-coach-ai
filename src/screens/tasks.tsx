@@ -1,10 +1,9 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
   TouchableOpacity,
   ScrollView,
-  SectionList,
   TextInput,
   Alert,
   StyleSheet,
@@ -13,244 +12,179 @@ import {
 } from 'react-native';
 import {
   useTasksStore,
-  PRIORITY_CONFIG,
-  TAG_CONFIG,
+  CATEGORY_CONFIG,
+  CATEGORIES,
+  QUICK_HABITS,
+  FREQUENCY_CONFIG,
+  DAYS_LABELS,
+  TIME_SLOTS,
 } from '../store/tasks.store';
-import { useScheduleStore } from '../store/schedule.store';
-import type { Priority, Tag, Task } from '../store/tasks.store';
+import type { Category, Frequency, Task } from '../store/tasks.store';
 
-const DAYS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
-const HOURS_START = 6;
-const HOURS_END = 22;
-const TIME_OPTIONS: { label: string; value: number }[] = [];
-for (let h = HOURS_START; h <= HOURS_END; h++) {
-  TIME_OPTIONS.push({ label: `${h.toString().padStart(2, '0')}:00`, value: h });
-  if (h < HOURS_END) {
-    TIME_OPTIONS.push({ label: `${h.toString().padStart(2, '0')}:30`, value: h + 0.5 });
-  }
-}
+type FilterMode = 'all' | 'today' | 'done';
 
-const PRIORITIES: Priority[] = ['urgent', 'medium', 'normal'];
-const TAGS: Tag[] = ['universidad', 'personal', 'proyectos'];
-const SECTION_ICONS: Record<Priority, string> = { urgent: '🔥', medium: '⚡', normal: '📌' };
+const FILTERS: { key: FilterMode; label: string; icon: string }[] = [
+  { key: 'all', label: 'Todo', icon: '🌟' },
+  { key: 'today', label: 'Hoy', icon: '📅' },
+  { key: 'done', label: 'Logrados', icon: '🏆' },
+];
+
+const FREQ_OPTIONS: Frequency[] = ['once', 'daily', 'custom'];
 
 export default function Tasks() {
-  const { tasks, addTask, toggleTask, removeTask, scheduleTask, unscheduleTask } = useTasksStore();
-  const { blocks } = useScheduleStore();
-  const [input, setInput] = useState('');
-  const [selectedPriority, setSelectedPriority] = useState<Priority>('normal');
-  const [selectedTag, setSelectedTag] = useState<Tag>('universidad');
-  const [showPriorityPicker, setShowPriorityPicker] = useState(false);
-  const [showTagPicker, setShowTagPicker] = useState(false);
+  const { tasks, addTask, updateTask, toggleTask, removeTask, getTasksForDate, checkDailyReset } =
+    useTasksStore();
+  const [filter, setFilter] = useState<FilterMode>('today');
 
-  // Schedule modal state
-  const [scheduleModalVisible, setScheduleModalVisible] = useState(false);
-  const [taskToSchedule, setTaskToSchedule] = useState<Task | null>(null);
-  const [scheduleDay, setScheduleDay] = useState(new Date().getDay());
-  const [scheduleHour, setScheduleHour] = useState(9);
+  // --- Modal state ---
+  const [modalVisible, setModalVisible] = useState(false);
+  const [formTitle, setFormTitle] = useState('');
+  const [formCategory, setFormCategory] = useState<Category>('carrera');
+  const [formFrequency, setFormFrequency] = useState<Frequency>('daily');
+  const [formRepeatDays, setFormRepeatDays] = useState<number[]>([1, 3, 5]);
+  const [formReminderTime, setFormReminderTime] = useState<string | null>(null);
   const [showTimePicker, setShowTimePicker] = useState(false);
-  const [aiSuggested, setAiSuggested] = useState(false);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
 
-  // Group pending tasks by priority (sections)
-  const sections = useMemo(() => {
-    return PRIORITIES.map((p) => ({
-      priority: p,
-      title: `${SECTION_ICONS[p]} ${PRIORITY_CONFIG[p].label}`,
-      data: tasks.filter((t) => t.priority === p && !t.completed),
-    })).filter((s) => s.data.length > 0);
-  }, [tasks]);
+  // Daily reset on mount
+  useEffect(() => {
+    checkDailyReset();
+  }, []);
 
-  const completedTasks = useMemo(() => tasks.filter((t) => t.completed), [tasks]);
+  // Filtered tasks
+  const todayTasks = useMemo(() => getTasksForDate(new Date()), [tasks]);
 
-  // Conteos
-  const totalTasks = tasks.length;
-  const completedCount = tasks.filter((t) => t.completed).length;
-  const pendingCount = totalTasks - completedCount;
-  const progressPercent = totalTasks > 0 ? Math.round((completedCount / totalTasks) * 100) : 0;
-
-  // Find free slot in schedule for a given day
-  const findFreeSlot = useCallback(
-    (dayIndex: number): number | null => {
-      const dayBlocks = blocks
-        .filter((b) => b.dayIndex === dayIndex)
-        .sort((a, b) => a.startHour - b.startHour);
-      const scheduledForDay = tasks.filter((t) => {
-        if (!t.scheduledTimestamp) return false;
-        const d = new Date(t.scheduledTimestamp);
-        return d.getDay() === dayIndex;
-      });
-      const now = new Date();
-      const startFrom =
-        dayIndex === now.getDay()
-          ? Math.max(HOURS_START, Math.ceil(now.getHours() + now.getMinutes() / 60))
-          : HOURS_START;
-      for (let h = startFrom; h < HOURS_END - 1; h++) {
-        const blockOccupied = dayBlocks.some(
-          (b) => h >= b.startHour && h < b.startHour + b.duration
-        );
-        const taskOccupied = scheduledForDay.some((t) => {
-          const d = new Date(t.scheduledTimestamp!);
-          const taskHour = d.getHours() + d.getMinutes() / 60;
-          return h >= taskHour && h < taskHour + 1;
+  const filteredTasks = useMemo(() => {
+    switch (filter) {
+      case 'today': {
+        // Sorted by reminderTime if available
+        const pending = todayTasks.filter((t: Task) => !t.completed);
+        return pending.sort((a, b) => {
+          if (a.reminderTime && b.reminderTime) return a.reminderTime.localeCompare(b.reminderTime);
+          if (a.reminderTime) return -1;
+          if (b.reminderTime) return 1;
+          return 0;
         });
-        if (!blockOccupied && !taskOccupied) return h;
       }
-      return null;
-    },
-    [blocks, tasks]
-  );
-
-  const handleAiSuggest = () => {
-    const today = new Date().getDay();
-    for (let offset = 0; offset < 7; offset++) {
-      const day = (today + offset) % 7;
-      const hour = findFreeSlot(day);
-      if (hour !== null) {
-        setScheduleDay(day);
-        setScheduleHour(hour);
-        setAiSuggested(true);
-        return;
-      }
+      case 'done':
+        return tasks.filter((t: Task) => t.completed);
+      default:
+        return tasks;
     }
-    Alert.alert('📅 Sin huecos', 'No se encontraron huecos libres esta semana.');
-  };
+  }, [tasks, todayTasks, filter]);
 
-  const openScheduleModal = (task: Task) => {
-    setTaskToSchedule(task);
-    setScheduleDay(new Date().getDay());
-    setScheduleHour(9);
-    setAiSuggested(false);
+  // Stats
+  const todayTotal = todayTasks.length;
+  const todayDone = todayTasks.filter((t: Task) => t.completed).length;
+  const todayPending = todayTotal - todayDone;
+  const progressPercent = todayTotal > 0 ? Math.round((todayDone / todayTotal) * 100) : 0;
+
+  const categoryStats = useMemo(() => {
+    const stats: Record<Category, { total: number; done: number }> = {
+      cuerpo: { total: 0, done: 0 },
+      mente: { total: 0, done: 0 },
+      carrera: { total: 0, done: 0 },
+      alma: { total: 0, done: 0 },
+    };
+    todayTasks.forEach((t: Task) => {
+      const cat = t.category || 'carrera';
+      stats[cat].total++;
+      if (t.completed) stats[cat].done++;
+    });
+    return stats;
+  }, [todayTasks]);
+
+  // --- Handlers ---
+  const openModal = (
+    presetTitle?: string,
+    presetCategory?: Category,
+    presetFreq?: Frequency,
+    presetTime?: string,
+  ) => {
+    setEditingTask(null);
+    setFormTitle(presetTitle ?? '');
+    setFormCategory(presetCategory ?? 'carrera');
+    setFormFrequency(presetFreq ?? 'daily');
+    setFormRepeatDays([1, 3, 5]);
+    setFormReminderTime(presetTime ?? null);
     setShowTimePicker(false);
-    setScheduleModalVisible(true);
+    setModalVisible(true);
   };
 
-  const confirmSchedule = () => {
-    if (!taskToSchedule) return;
-    const now = new Date();
-    const target = new Date(now);
-    const currentDay = now.getDay();
-    let daysAhead = scheduleDay - currentDay;
-    if (daysAhead < 0) daysAhead += 7;
-    if (daysAhead === 0 && scheduleHour <= now.getHours()) daysAhead = 7;
-    target.setDate(target.getDate() + daysAhead);
-    target.setHours(Math.floor(scheduleHour), (scheduleHour % 1) * 60, 0, 0);
-    scheduleTask(taskToSchedule.id, target.getTime());
-    setScheduleModalVisible(false);
-    setTaskToSchedule(null);
-    setAiSuggested(false);
+  const openEditModal = (task: Task) => {
+    setEditingTask(task);
+    setFormTitle(task.title);
+    setFormCategory(task.category || 'carrera');
+    setFormFrequency(task.frequency || 'once');
+    setFormRepeatDays(task.repeatDays ?? [1, 3, 5]);
+    setFormReminderTime(task.reminderTime ?? null);
+    setShowTimePicker(false);
+    setModalVisible(true);
   };
 
-  const formatHour = (h: number) => {
-    const hh = Math.floor(h);
-    const mm = h % 1 === 0.5 ? '30' : '00';
-    return `${hh.toString().padStart(2, '0')}:${mm}`;
-  };
-
-  const getScheduleInfo = (task: Task) => {
-    if (!task.scheduledTimestamp) return null;
-    const d = new Date(task.scheduledTimestamp);
-    return { day: DAYS[d.getDay()], hour: formatHour(d.getHours() + d.getMinutes() / 60) };
-  };
-
-  const handleAdd = () => {
-    if (!input.trim()) return;
-    addTask(input.trim(), selectedPriority, selectedTag);
-    setInput('');
-    setSelectedPriority('normal');
+  const handleSave = () => {
+    if (!formTitle.trim()) return;
+    if (editingTask) {
+      updateTask(editingTask.id, {
+        title: formTitle.trim(),
+        category: formCategory,
+        frequency: formFrequency,
+        repeatDays: formFrequency === 'custom' ? formRepeatDays : undefined,
+        reminderTime: formReminderTime ?? undefined,
+      });
+    } else {
+      addTask({
+        title: formTitle.trim(),
+        category: formCategory,
+        frequency: formFrequency,
+        repeatDays: formFrequency === 'custom' ? formRepeatDays : undefined,
+        reminderTime: formReminderTime ?? undefined,
+      });
+    }
+    setFormTitle('');
+    setFormReminderTime(null);
+    setEditingTask(null);
+    setModalVisible(false);
     Keyboard.dismiss();
   };
 
-  const handleDelete = (task: Task) => {
-    Alert.alert(
-      'Eliminar tarea',
-      `¿Eliminar "${task.title}"?`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        { text: 'Eliminar', style: 'destructive', onPress: () => removeTask(task.id) },
-      ]
+  const handleQuickAdd = (
+    title: string,
+    category: Category,
+    frequency: Frequency,
+    reminderTime?: string,
+  ) => {
+    if (frequency === 'custom') {
+      openModal(title, category, 'custom', reminderTime);
+    } else {
+      addTask({ title, category, frequency, reminderTime });
+    }
+  };
+
+  const toggleRepeatDay = (day: number) => {
+    setFormRepeatDays((prev) =>
+      prev.includes(day) ? prev.filter((d) => d !== day) : [...prev, day].sort()
     );
   };
 
-  const priConf = PRIORITY_CONFIG[selectedPriority];
+  const handleDelete = (task: Task) => {
+    Alert.alert('Eliminar hábito', `¿Eliminar "${task.title}"?`, [
+      { text: 'Cancelar', style: 'cancel' },
+      { text: 'Eliminar', style: 'destructive', onPress: () => removeTask(task.id) },
+    ]);
+  };
 
-  const renderTaskCard = ({ item: task }: { item: Task }) => {
-    const pConf = PRIORITY_CONFIG[task.priority];
-    const tConf = TAG_CONFIG[task.tag];
-    const schedInfo = getScheduleInfo(task);
-    return (
-      <TouchableOpacity
-        onLongPress={() => handleDelete(task)}
-        activeOpacity={0.8}
-        style={[
-          styles.taskCard,
-          { borderLeftColor: task.completed ? '#10b981' : pConf.color },
-          task.completed && styles.taskCardCompleted,
-        ]}
-      >
-        <TouchableOpacity
-          onPress={() => toggleTask(task.id)}
-          style={[
-            styles.checkbox,
-            task.completed && styles.checkboxDone,
-            !task.completed && { borderColor: pConf.color },
-          ]}
-          hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-        >
-          {task.completed && <Text style={styles.checkMark}>✓</Text>}
-        </TouchableOpacity>
+  const getFrequencyLabel = (task: Task) => {
+    if (task.frequency === 'daily') return '🔄 Diario';
+    if (task.frequency === 'custom' && task.repeatDays) {
+      return '📆 ' + task.repeatDays.map((d) => DAYS_LABELS[d]).join(', ');
+    }
+    return '1️⃣ Una vez';
+  };
 
-        <View style={styles.taskBody}>
-          <Text
-            style={[styles.taskTitle, task.completed && styles.taskTitleDone]}
-            numberOfLines={2}
-          >
-            {task.title}
-          </Text>
-          <View style={styles.taskMeta}>
-            {!task.completed && (task.priority === 'urgent' || task.priority === 'medium') && (
-              <View style={[styles.priorityBadge, { backgroundColor: pConf.bg }]}>
-                <Text style={[styles.priorityBadgeText, { color: pConf.color }]}>
-                  {pConf.icon} {pConf.label}
-                </Text>
-              </View>
-            )}
-            <View style={[styles.tagBadge, { backgroundColor: tConf.color + '18' }]}>
-              <Text style={[styles.tagBadgeText, { color: tConf.color }]}>
-                {tConf.icon} {tConf.label}
-              </Text>
-            </View>
-            {schedInfo && (
-              <View style={styles.scheduleBadge}>
-                <Text style={styles.scheduleBadgeText}>
-                  🕐 {schedInfo.day} {schedInfo.hour}
-                </Text>
-              </View>
-            )}
-            {task.completed && <Text style={styles.doneBadge}>✔ Hecho</Text>}
-          </View>
-        </View>
-
-        {/* Schedule / Unschedule button */}
-        {!task.completed && (
-          <TouchableOpacity
-            onPress={() =>
-              task.scheduledTimestamp
-                ? unscheduleTask(task.id)
-                : openScheduleModal(task)
-            }
-            style={[
-              styles.scheduleBtn,
-              task.scheduledTimestamp ? styles.scheduleBtnActive : null,
-            ]}
-            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
-          >
-            <Text style={{ fontSize: 18 }}>
-              {task.scheduledTimestamp ? '📅' : '🕐'}
-            </Text>
-          </TouchableOpacity>
-        )}
-      </TouchableOpacity>
-    );
+  const selectTime = (time: string) => {
+    setFormReminderTime(time);
+    setShowTimePicker(false);
   };
 
   return (
@@ -259,255 +193,391 @@ export default function Tasks() {
       <View style={styles.header}>
         <View style={styles.headerRow}>
           <View>
-            <Text style={styles.headerTitle}>📎 Mis Tareas</Text>
-            <Text style={styles.headerSub}>{pendingCount} pendientes · {completedCount} listas</Text>
+            <Text style={styles.headerTitle}>🌱 Mi Plan</Text>
+            <Text style={styles.headerSub}>
+              {todayPending} pendientes hoy · {todayDone} logrados
+            </Text>
           </View>
           <View style={styles.progressBadge}>
             <Text style={styles.progressPercent}>{progressPercent}%</Text>
             <Text style={styles.progressLabel}>hoy</Text>
           </View>
         </View>
+
+        {/* Category stat pills */}
+        <View style={styles.catStatsRow}>
+          {CATEGORIES.map((cat) => {
+            const cc = CATEGORY_CONFIG[cat];
+            const st = categoryStats[cat];
+            return (
+              <View key={cat} style={[styles.catStatPill, { backgroundColor: cc.bg }]}>
+                <Text style={{ fontSize: 14 }}>{cc.icon}</Text>
+                <Text style={[styles.catStatText, { color: cc.color }]}>
+                  {st.done}/{st.total}
+                </Text>
+              </View>
+            );
+          })}
+        </View>
+
         <View style={styles.progressBarBg}>
           <View style={[styles.progressBarFill, { width: `${progressPercent}%` }]} />
         </View>
       </View>
 
-      {/* Task list grouped by priority */}
-      <SectionList
-        sections={sections}
-        keyExtractor={(item) => item.id}
-        renderItem={renderTaskCard}
-        renderSectionHeader={({ section }) => (
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>{(section as any).title}</Text>
-            <View style={[styles.sectionCount, { backgroundColor: PRIORITY_CONFIG[(section as any).priority].bg }]}>
-              <Text style={[styles.sectionCountText, { color: PRIORITY_CONFIG[(section as any).priority].color }]}>
-                {section.data.length}
-              </Text>
-            </View>
-          </View>
-        )}
-        ListFooterComponent={
-          completedTasks.length > 0 ? (
-            <View>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>✅ Completadas</Text>
-                <View style={[styles.sectionCount, { backgroundColor: '#d1fae5' }]}>
-                  <Text style={[styles.sectionCountText, { color: '#059669' }]}>
-                    {completedTasks.length}
+      <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
+        {/* Quick Habits Carousel */}
+        <View style={styles.quickSection}>
+          <Text style={styles.quickSectionTitle}>⚡ Acciones Rápidas</Text>
+          <Text style={styles.quickSectionSub}>Un toque para comenzar un hábito</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.quickScroll}
+          >
+            {QUICK_HABITS.map((habit, idx) => {
+              const hc = CATEGORY_CONFIG[habit.category];
+              return (
+                <TouchableOpacity
+                  key={idx}
+                  style={[styles.quickCard, { backgroundColor: hc.bg, borderColor: hc.gradient }]}
+                  onPress={() =>
+                    handleQuickAdd(habit.title, habit.category, habit.frequency, habit.reminderTime)
+                  }
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.quickCardIcon}>{habit.icon}</Text>
+                  <Text style={[styles.quickCardTitle, { color: hc.color }]} numberOfLines={2}>
+                    {habit.title}
                   </Text>
-                </View>
-              </View>
-              {completedTasks.map((task) => (
-                <View key={task.id}>
-                  {renderTaskCard({ item: task })}
-                </View>
-              ))}
-            </View>
-          ) : null
-        }
-        ListEmptyComponent={
-          completedTasks.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyIcon}>🎯</Text>
-              <Text style={styles.emptyTitle}>No hay tareas aún</Text>
-              <Text style={styles.emptySubtitle}>Agrega tareas para comenzar</Text>
-            </View>
-          ) : null
-        }
-        contentContainerStyle={{ paddingBottom: 140, paddingHorizontal: 16, paddingTop: 12 }}
-        stickySectionHeadersEnabled={false}
-        showsVerticalScrollIndicator={false}
-      />
-
-      {/* Input bar */}
-      <View style={styles.inputBar}>
-        {/* Selectores rápidos */}
-        <View style={styles.quickSelectors}>
-          <TouchableOpacity
-            onPress={() => { setShowPriorityPicker(!showPriorityPicker); setShowTagPicker(false); }}
-            style={[styles.quickBtn, { backgroundColor: priConf.bg }]}
-          >
-            <Text style={{ fontSize: 14 }}>{priConf.icon}</Text>
-            <Text style={[styles.quickBtnText, { color: priConf.color }]}>{priConf.label}</Text>
-            <Text style={{ fontSize: 10, color: '#9ca3af' }}>▼</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity
-            onPress={() => { setShowTagPicker(!showTagPicker); setShowPriorityPicker(false); }}
-            style={[styles.quickBtn, { backgroundColor: TAG_CONFIG[selectedTag].color + '18' }]}
-          >
-            <Text style={{ fontSize: 14 }}>{TAG_CONFIG[selectedTag].icon}</Text>
-            <Text style={[styles.quickBtnText, { color: TAG_CONFIG[selectedTag].color }]}>
-              {TAG_CONFIG[selectedTag].label}
-            </Text>
-            <Text style={{ fontSize: 10, color: '#9ca3af' }}>▼</Text>
-          </TouchableOpacity>
-        </View>
-
-        {showPriorityPicker && (
-          <View style={styles.pickerDropdown}>
-            {PRIORITIES.map((p) => {
-              const pc = PRIORITY_CONFIG[p];
-              return (
-                <TouchableOpacity
-                  key={p}
-                  onPress={() => { setSelectedPriority(p); setShowPriorityPicker(false); }}
-                  style={[styles.pickerItem, selectedPriority === p && { backgroundColor: pc.bg }]}
-                >
-                  <Text style={{ fontSize: 14 }}>{pc.icon}</Text>
-                  <Text style={[styles.pickerItemText, { color: pc.color }]}>{pc.label}</Text>
+                  <View style={[styles.quickCardCatBadge, { backgroundColor: hc.color + '20' }]}>
+                    <Text style={[styles.quickCardCatText, { color: hc.color }]}>
+                      {FREQUENCY_CONFIG[habit.frequency].icon}{' '}
+                      {habit.reminderTime ? habit.reminderTime : FREQUENCY_CONFIG[habit.frequency].label}
+                    </Text>
+                  </View>
                 </TouchableOpacity>
               );
             })}
-          </View>
-        )}
-
-        {showTagPicker && (
-          <View style={styles.pickerDropdown}>
-            {TAGS.map((t) => {
-              const tc = TAG_CONFIG[t];
-              return (
-                <TouchableOpacity
-                  key={t}
-                  onPress={() => { setSelectedTag(t); setShowTagPicker(false); }}
-                  style={[styles.pickerItem, selectedTag === t && { backgroundColor: tc.color + '18' }]}
-                >
-                  <Text style={{ fontSize: 14 }}>{tc.icon}</Text>
-                  <Text style={[styles.pickerItemText, { color: tc.color }]}>{tc.label}</Text>
-                </TouchableOpacity>
-              );
-            })}
-          </View>
-        )}
-
-        <View style={styles.inputRow}>
-          <TextInput
-            style={styles.textInput}
-            placeholder="Nueva tarea..."
-            placeholderTextColor="#9ca3af"
-            value={input}
-            onChangeText={setInput}
-            onSubmitEditing={handleAdd}
-            returnKeyType="done"
-          />
-          <TouchableOpacity
-            onPress={handleAdd}
-            style={[styles.addButton, !input.trim() && styles.addButtonDisabled]}
-            disabled={!input.trim()}
-          >
-            <Text style={styles.addButtonText}>＋</Text>
-          </TouchableOpacity>
+          </ScrollView>
         </View>
-      </View>
 
-      {/* Schedule Modal */}
-      <Modal
-        visible={scheduleModalVisible}
-        animationType="slide"
-        transparent
-        onRequestClose={() => setScheduleModalVisible(false)}
-      >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalContent}>
-            <Text style={styles.modalTitle}>📅 Programar Tarea</Text>
-            {taskToSchedule && (
-              <Text style={styles.modalTaskName} numberOfLines={2}>
-                "{taskToSchedule.title}"
-              </Text>
-            )}
-
-            {/* AI Suggest button */}
-            <TouchableOpacity style={styles.aiSuggestBtn} onPress={handleAiSuggest}>
-              <Text style={styles.aiSuggestIcon}>🪄</Text>
-              <View>
-                <Text style={styles.aiSuggestText}>IA Suggest</Text>
-                <Text style={styles.aiSuggestSub}>Encontrar hueco libre automáticamente</Text>
-              </View>
-            </TouchableOpacity>
-
-            {aiSuggested && (
-              <View style={styles.aiResultBanner}>
-                <Text style={styles.aiResultText}>
-                  ✨ Hueco encontrado: {DAYS[scheduleDay]} a las {formatHour(scheduleHour)}
+        {/* Filters */}
+        <View style={styles.filtersRow}>
+          {FILTERS.map((f) => {
+            const active = filter === f.key;
+            return (
+              <TouchableOpacity
+                key={f.key}
+                onPress={() => setFilter(f.key)}
+                style={[styles.filterChip, active && styles.filterChipActive]}
+              >
+                <Text style={styles.filterIcon}>{f.icon}</Text>
+                <Text style={[styles.filterText, active && styles.filterTextActive]}>
+                  {f.label}
                 </Text>
-              </View>
-            )}
+              </TouchableOpacity>
+            );
+          })}
+        </View>
 
-            {/* Day picker */}
-            <Text style={styles.modalLabel}>Día</Text>
-            <View style={styles.dayPickerRow}>
-              {DAYS.map((d, idx) => (
+        {/* Task / Habit List */}
+        <View style={styles.taskList}>
+          {filteredTasks.length === 0 ? (
+            <View style={styles.emptyState}>
+              <Text style={styles.emptyIcon}>
+                {filter === 'done' ? '🏆' : filter === 'today' ? '🎉' : '🌱'}
+              </Text>
+              <Text style={styles.emptyTitle}>
+                {filter === 'done'
+                  ? 'Sin logros aún'
+                  : filter === 'today'
+                  ? '¡Todo completado hoy!'
+                  : 'Comienza tu plan'}
+              </Text>
+              <Text style={styles.emptySubtitle}>
+                {filter === 'done'
+                  ? 'Completa hábitos para verlos aquí'
+                  : filter === 'today'
+                  ? 'Agrega hábitos que se repitan hoy'
+                  : 'Usa las acciones rápidas o agrega uno propio'}
+              </Text>
+            </View>
+          ) : (
+            filteredTasks.map((task: Task) => {
+              const cat = task.category || 'carrera';
+              const cc = CATEGORY_CONFIG[cat];
+              return (
                 <TouchableOpacity
-                  key={d}
-                  onPress={() => { setScheduleDay(idx); setAiSuggested(false); }}
+                  key={task.id}
+                  onPress={() => openEditModal(task)}
+                  onLongPress={() => handleDelete(task)}
+                  activeOpacity={0.8}
                   style={[
-                    styles.dayPickerBtn,
-                    scheduleDay === idx && styles.dayPickerBtnActive,
+                    styles.taskCard,
+                    { borderLeftColor: task.completed ? '#10b981' : cc.color },
+                    task.completed && styles.taskCardCompleted,
                   ]}
                 >
-                  <Text
-                    style={[
-                      styles.dayPickerText,
-                      scheduleDay === idx && styles.dayPickerTextActive,
-                    ]}
-                  >
-                    {d}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </View>
+                  <View style={[styles.catIconBubble, { backgroundColor: cc.bg }]}>
+                    <Text style={{ fontSize: 22 }}>{cc.icon}</Text>
+                  </View>
 
-            {/* Time picker */}
-            <Text style={styles.modalLabel}>Hora</Text>
-            <TouchableOpacity
-              style={styles.timePickerButton}
-              onPress={() => setShowTimePicker(!showTimePicker)}
-            >
-              <Text style={styles.timePickerValue}>{formatHour(scheduleHour)}</Text>
-              <Text style={styles.timePickerArrow}>▼</Text>
-            </TouchableOpacity>
-            {showTimePicker && (
-              <ScrollView style={styles.timePickerList} nestedScrollEnabled>
-                {TIME_OPTIONS.map((opt) => (
+                  <View style={styles.taskBody}>
+                    <View style={styles.taskTitleRow}>
+                      <Text
+                        style={[styles.taskTitle, task.completed && styles.taskTitleDone]}
+                        numberOfLines={2}
+                      >
+                        {task.title}
+                      </Text>
+                      {task.reminderTime && (
+                        <View style={styles.timeBadge}>
+                          <Text style={styles.timeBadgeText}>⏰ {task.reminderTime}</Text>
+                        </View>
+                      )}
+                    </View>
+                    <View style={styles.taskMeta}>
+                      <View style={[styles.catBadge, { backgroundColor: cc.color + '15' }]}>
+                        <Text style={[styles.catBadgeText, { color: cc.color }]}>{cc.label}</Text>
+                      </View>
+                      <View style={styles.freqBadge}>
+                        <Text style={styles.freqBadgeText}>{getFrequencyLabel(task)}</Text>
+                      </View>
+                      {task.completed && <Text style={styles.doneBadge}>🏆 Logrado</Text>}
+                    </View>
+                  </View>
+
                   <TouchableOpacity
-                    key={`sched-${opt.value}`}
+                    onPress={() => toggleTask(task.id)}
                     style={[
-                      styles.timePickerItem,
-                      scheduleHour === opt.value && styles.timePickerItemActive,
+                      styles.checkbox,
+                      task.completed && styles.checkboxDone,
+                      !task.completed && { borderColor: cc.color },
                     ]}
-                    onPress={() => {
-                      setScheduleHour(opt.value);
-                      setShowTimePicker(false);
-                      setAiSuggested(false);
-                    }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
                   >
-                    <Text
+                    {task.completed ? (
+                      <Text style={styles.checkMark}>✓</Text>
+                    ) : (
+                      <Text style={[styles.checkEmpty, { color: cc.color }]}>○</Text>
+                    )}
+                  </TouchableOpacity>
+                </TouchableOpacity>
+              );
+            })
+          )}
+        </View>
+        <View style={{ height: 100 }} />
+      </ScrollView>
+
+      {/* Floating Add Button */}
+      <TouchableOpacity
+        style={styles.fab}
+        onPress={() => openModal()}
+        activeOpacity={0.8}
+      >
+        <Text style={styles.fabText}>＋</Text>
+      </TouchableOpacity>
+
+      {/* ===== Create Habit Modal ===== */}
+      <Modal
+        visible={modalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={() => { setModalVisible(false); setEditingTask(null); }}
+      >
+        <View style={styles.modalOverlay}>
+          <ScrollView
+            contentContainerStyle={styles.modalScroll}
+            keyboardShouldPersistTaps="handled"
+          >
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>
+                {editingTask ? '✏️ Editar Hábito' : '🌱 Nuevo Hábito'}
+              </Text>
+
+              {/* Step 1: Title */}
+              <Text style={styles.modalLabel}>¿Qué quieres lograr?</Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Ej: Leer 15 minutos, Ir al gym..."
+                placeholderTextColor="#9ca3af"
+                value={formTitle}
+                onChangeText={setFormTitle}
+                autoFocus
+              />
+
+              {/* Step 2: Category */}
+              <Text style={styles.modalLabel}>Área de vida</Text>
+              <View style={styles.modalCatRow}>
+                {CATEGORIES.map((cat) => {
+                  const cc = CATEGORY_CONFIG[cat];
+                  const active = formCategory === cat;
+                  return (
+                    <TouchableOpacity
+                      key={cat}
+                      onPress={() => setFormCategory(cat)}
                       style={[
-                        styles.timePickerItemText,
-                        scheduleHour === opt.value && styles.timePickerItemTextActive,
+                        styles.modalCatBtn,
+                        { backgroundColor: active ? cc.color : cc.bg, borderColor: cc.gradient },
                       ]}
                     >
-                      {opt.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            )}
+                      <Text style={{ fontSize: 20 }}>{cc.icon}</Text>
+                      <Text
+                        style={[
+                          styles.modalCatLabel,
+                          { color: active ? '#ffffff' : cc.color },
+                        ]}
+                      >
+                        {cc.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
 
-            {/* Actions */}
-            <View style={styles.modalActions}>
+              {/* Step 3: Frequency */}
+              <Text style={styles.modalLabel}>¿Cuándo?</Text>
+              <View style={styles.freqRow}>
+                {FREQ_OPTIONS.map((freq) => {
+                  const fc = FREQUENCY_CONFIG[freq];
+                  const active = formFrequency === freq;
+                  return (
+                    <TouchableOpacity
+                      key={freq}
+                      onPress={() => setFormFrequency(freq)}
+                      style={[styles.freqBtn, active && styles.freqBtnActive]}
+                    >
+                      <Text style={{ fontSize: 18 }}>{fc.icon}</Text>
+                      <Text style={[styles.freqBtnText, active && styles.freqBtnTextActive]}>
+                        {fc.label}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Day selector (only for custom) */}
+              {formFrequency === 'custom' && (
+                <View style={styles.daySelector}>
+                  <Text style={styles.daySelectorLabel}>Selecciona los días:</Text>
+                  <View style={styles.dayRow}>
+                    {DAYS_LABELS.map((label, idx) => {
+                      const active = formRepeatDays.includes(idx);
+                      return (
+                        <TouchableOpacity
+                          key={idx}
+                          onPress={() => toggleRepeatDay(idx)}
+                          style={[styles.dayBtn, active && styles.dayBtnActive]}
+                        >
+                          <Text style={[styles.dayBtnText, active && styles.dayBtnTextActive]}>
+                            {label}
+                          </Text>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </View>
+                  {formRepeatDays.length > 0 && (
+                    <Text style={styles.daysSummary}>
+                      ✓ {formRepeatDays.map((d) => DAYS_LABELS[d]).join(', ')}
+                    </Text>
+                  )}
+                </View>
+              )}
+
+              {/* Step 4: Reminder Time */}
+              <Text style={styles.modalLabel}>⏰ Horario (opcional)</Text>
               <TouchableOpacity
-                style={styles.cancelButton}
-                onPress={() => setScheduleModalVisible(false)}
+                style={styles.timeToggle}
+                onPress={() => setShowTimePicker(!showTimePicker)}
+                activeOpacity={0.7}
               >
-                <Text style={styles.cancelText}>Cancelar</Text>
+                <Text style={styles.timeToggleIcon}>🕐</Text>
+                <Text style={styles.timeToggleText}>
+                  {formReminderTime
+                    ? `A las ${formReminderTime}`
+                    : 'Sin hora fija — Toca para asignar'}
+                </Text>
+                {formReminderTime ? (
+                  <TouchableOpacity
+                    onPress={() => {
+                      setFormReminderTime(null);
+                      setShowTimePicker(false);
+                    }}
+                    hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                  >
+                    <Text style={styles.timeClear}>✕</Text>
+                  </TouchableOpacity>
+                ) : (
+                  <Text style={styles.timeChevron}>{showTimePicker ? '▲' : '▼'}</Text>
+                )}
               </TouchableOpacity>
-              <TouchableOpacity style={styles.saveButton} onPress={confirmSchedule}>
-                <Text style={styles.saveText}>Agendar</Text>
-              </TouchableOpacity>
+
+              {showTimePicker && (
+                <View style={styles.timeGrid}>
+                  <ScrollView
+                    nestedScrollEnabled
+                    showsVerticalScrollIndicator={false}
+                    style={styles.timeGridList}
+                  >
+                    <View style={styles.timeGridRow}>
+                      {TIME_SLOTS.map((slot) => {
+                        const active = formReminderTime === slot;
+                        return (
+                          <TouchableOpacity
+                            key={slot}
+                            onPress={() => selectTime(slot)}
+                            style={[styles.timeSlot, active && styles.timeSlotActive]}
+                          >
+                            <Text style={[styles.timeSlotText, active && styles.timeSlotTextActive]}>
+                              {slot}
+                            </Text>
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  </ScrollView>
+                </View>
+              )}
+
+              {/* Summary */}
+              {formTitle.trim() !== '' && (
+                <View style={styles.summaryBox}>
+                  <Text style={styles.summaryTitle}>📋 Resumen</Text>
+                  <Text style={styles.summaryText}>
+                    {CATEGORY_CONFIG[formCategory].icon} {formTitle}
+                  </Text>
+                  <Text style={styles.summaryDetail}>
+                    {FREQUENCY_CONFIG[formFrequency].icon} {FREQUENCY_CONFIG[formFrequency].label}
+                    {formFrequency === 'custom' && formRepeatDays.length > 0
+                      ? ` (${formRepeatDays.map((d) => DAYS_LABELS[d]).join(', ')})`
+                      : ''}
+                    {formReminderTime ? ` · ⏰ ${formReminderTime}` : ''}
+                  </Text>
+                </View>
+              )}
+
+              {/* Actions */}
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  style={styles.cancelButton}
+                  onPress={() => { setModalVisible(false); setEditingTask(null); }}
+                >
+                  <Text style={styles.cancelText}>Cancelar</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.saveButton, !formTitle.trim() && { opacity: 0.4 }]}
+                  onPress={handleSave}
+                  disabled={!formTitle.trim()}
+                >
+                  <Text style={styles.saveText}>
+                    {editingTask ? 'Guardar Cambios' : 'Crear Hábito'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </View>
-          </View>
+          </ScrollView>
         </View>
       </Modal>
     </View>
@@ -515,13 +585,10 @@ export default function Tasks() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#f9fafb',
-  },
+  container: { flex: 1, backgroundColor: '#f9fafb' },
   // Header
   header: {
-    backgroundColor: '#4F46E5',
+    backgroundColor: '#059669',
     paddingTop: 48,
     paddingBottom: 16,
     paddingHorizontal: 20,
@@ -531,16 +598,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  headerTitle: {
-    fontSize: 26,
-    fontWeight: 'bold',
-    color: '#ffffff',
-  },
-  headerSub: {
-    fontSize: 13,
-    color: '#c7d2fe',
-    marginTop: 4,
-  },
+  headerTitle: { fontSize: 26, fontWeight: 'bold', color: '#ffffff' },
+  headerSub: { fontSize: 13, color: '#a7f3d0', marginTop: 4 },
   progressBadge: {
     backgroundColor: 'rgba(255,255,255,0.2)',
     borderRadius: 14,
@@ -554,51 +613,76 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontVariant: ['tabular-nums'],
   },
-  progressLabel: {
-    fontSize: 10,
-    color: '#c7d2fe',
-    fontWeight: '600',
-  },
-  progressBarBg: {
-    height: 6,
-    backgroundColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 3,
-    marginTop: 12,
-    overflow: 'hidden',
-  },
-  progressBarFill: {
-    height: 6,
-    backgroundColor: '#34d399',
-    borderRadius: 3,
-  },
-  // Section headers
-  sectionHeader: {
+  progressLabel: { fontSize: 9, color: '#a7f3d0', fontWeight: '600' },
+  catStatsRow: { flexDirection: 'row', gap: 8, marginTop: 14, marginBottom: 4 },
+  catStatPill: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 10,
-    paddingHorizontal: 4,
-    marginTop: 8,
-  },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '800',
-    color: '#1f2937',
-  },
-  sectionCount: {
-    paddingHorizontal: 10,
-    paddingVertical: 3,
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 6,
     borderRadius: 10,
   },
-  sectionCountText: {
-    fontSize: 12,
-    fontWeight: '800',
+  catStatText: { fontSize: 12, fontWeight: '800' },
+  progressBarBg: {
+    height: 5,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    borderRadius: 3,
+    marginTop: 10,
+    overflow: 'hidden',
+  },
+  progressBarFill: { height: 5, backgroundColor: '#34d399', borderRadius: 3 },
+  // Quick Habits
+  quickSection: { paddingTop: 16, paddingBottom: 8, paddingLeft: 16 },
+  quickSectionTitle: { fontSize: 17, fontWeight: '800', color: '#1f2937' },
+  quickSectionSub: { fontSize: 12, color: '#9ca3af', marginTop: 2, marginBottom: 12 },
+  quickScroll: { paddingRight: 24, gap: 10 },
+  quickCard: {
+    width: 120,
+    borderRadius: 16,
+    padding: 14,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+  },
+  quickCardIcon: { fontSize: 30 },
+  quickCardTitle: { fontSize: 12, fontWeight: '700', textAlign: 'center', lineHeight: 16 },
+  quickCardCatBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, marginTop: 2 },
+  quickCardCatText: { fontSize: 9, fontWeight: '800' },
+  // Filters
+  filtersRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 10 },
+  filterChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: '#f3f4f6',
+    gap: 4,
+  },
+  filterChipActive: { backgroundColor: '#059669' },
+  filterIcon: { fontSize: 13 },
+  filterText: { fontSize: 13, fontWeight: '600', color: '#6b7280' },
+  filterTextActive: { color: '#ffffff' },
+  // Task list
+  taskList: { paddingHorizontal: 16 },
+  emptyState: { marginTop: 40, alignItems: 'center' },
+  emptyIcon: { fontSize: 48, marginBottom: 12 },
+  emptyTitle: { fontSize: 17, fontWeight: '700', color: '#1f2937' },
+  emptySubtitle: {
+    fontSize: 13,
+    color: '#9ca3af',
+    marginTop: 6,
+    textAlign: 'center',
+    paddingHorizontal: 30,
   },
   // Task card
   taskCard: {
     flexDirection: 'row',
     backgroundColor: '#ffffff',
-    borderRadius: 14,
+    borderRadius: 16,
     padding: 14,
     marginBottom: 10,
     borderLeftWidth: 4,
@@ -607,79 +691,43 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.06,
     shadowRadius: 2,
-    alignItems: 'flex-start',
+    alignItems: 'center',
   },
-  taskCardCompleted: {
-    opacity: 0.7,
-    backgroundColor: '#f0fdf4',
-  },
-  checkbox: {
-    width: 26,
-    height: 26,
-    borderRadius: 13,
-    borderWidth: 2.5,
+  taskCardCompleted: { opacity: 0.7, backgroundColor: '#f0fdf4' },
+  catIconBubble: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 12,
-    marginTop: 2,
   },
-  checkboxDone: {
-    backgroundColor: '#10b981',
-    borderColor: '#10b981',
-  },
-  checkMark: {
-    fontSize: 14,
-    fontWeight: '900',
-    color: '#ffffff',
-  },
-  taskBody: {
-    flex: 1,
-  },
-  taskTitle: {
-    fontSize: 15,
-    fontWeight: '600',
-    color: '#1f2937',
-    lineHeight: 20,
-  },
-  taskTitleDone: {
-    textDecorationLine: 'line-through',
-    color: '#059669',
-  },
-  taskMeta: {
+  taskBody: { flex: 1 },
+  taskTitleRow: {
     flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     gap: 6,
-    marginTop: 6,
-    flexWrap: 'wrap',
   },
-  priorityBadge: {
+  taskTitle: { fontSize: 15, fontWeight: '600', color: '#1f2937', lineHeight: 20, flex: 1 },
+  taskTitleDone: { textDecorationLine: 'line-through', color: '#059669' },
+  timeBadge: {
+    backgroundColor: '#fef3c7',
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 8,
   },
-  priorityBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
-  },
-  tagBadge: {
+  timeBadgeText: { fontSize: 10, fontWeight: '800', color: '#92400e' },
+  taskMeta: { flexDirection: 'row', gap: 6, marginTop: 5, flexWrap: 'wrap' },
+  catBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8 },
+  catBadgeText: { fontSize: 10, fontWeight: '800' },
+  freqBadge: {
     paddingHorizontal: 8,
     paddingVertical: 3,
     borderRadius: 8,
+    backgroundColor: '#f0f9ff',
   },
-  tagBadgeText: {
-    fontSize: 10,
-    fontWeight: '700',
-  },
-  scheduleBadge: {
-    backgroundColor: '#eef2ff',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
-  },
-  scheduleBadgeText: {
-    fontSize: 10,
-    fontWeight: '700',
-    color: '#4F46E5',
-  },
+  freqBadgeText: { fontSize: 10, fontWeight: '700', color: '#0369a1' },
   doneBadge: {
     fontSize: 10,
     fontWeight: '700',
@@ -690,119 +738,44 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     overflow: 'hidden',
   },
-  // Schedule button
-  scheduleBtn: {
-    padding: 6,
-    borderRadius: 10,
-    backgroundColor: '#f3f4f6',
-    marginLeft: 8,
-    marginTop: 2,
-  },
-  scheduleBtnActive: {
-    backgroundColor: '#eef2ff',
-  },
-  // Empty
-  emptyState: {
-    marginTop: 60,
-    alignItems: 'center',
-  },
-  emptyIcon: {
-    fontSize: 48,
-    marginBottom: 12,
-  },
-  emptyTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: '#1f2937',
-  },
-  emptySubtitle: {
-    fontSize: 13,
-    color: '#9ca3af',
-    marginTop: 6,
-  },
-  // Input bar
-  inputBar: {
-    backgroundColor: '#ffffff',
-    borderTopWidth: 1,
-    borderTopColor: '#e5e7eb',
-    paddingHorizontal: 16,
-    paddingTop: 10,
-    paddingBottom: 28,
-  },
-  quickSelectors: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 10,
-  },
-  quickBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
-    borderRadius: 10,
-    gap: 4,
-  },
-  quickBtnText: {
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  pickerDropdown: {
-    backgroundColor: '#ffffff',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#e5e7eb',
-    marginBottom: 8,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-  },
-  pickerItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingVertical: 11,
-    gap: 8,
-    borderBottomWidth: 1,
-    borderBottomColor: '#f3f4f6',
-  },
-  pickerItemText: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  inputRow: {
-    flexDirection: 'row',
-    gap: 10,
-  },
-  textInput: {
-    flex: 1,
-    backgroundColor: '#f3f4f6',
-    borderRadius: 14,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    fontSize: 15,
-    color: '#1f2937',
-  },
-  addButton: {
-    backgroundColor: '#4F46E5',
-    borderRadius: 14,
-    width: 48,
+  checkbox: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    borderWidth: 2.5,
     alignItems: 'center',
     justifyContent: 'center',
+    marginLeft: 10,
   },
-  addButtonDisabled: {
-    opacity: 0.4,
+  checkboxDone: { backgroundColor: '#10b981', borderColor: '#10b981' },
+  checkMark: { fontSize: 15, fontWeight: '900', color: '#ffffff' },
+  checkEmpty: { fontSize: 18, fontWeight: '300' },
+  // FAB
+  fab: {
+    position: 'absolute',
+    bottom: 24,
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: '#059669',
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
   },
-  addButtonText: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#ffffff',
-  },
-  // Schedule Modal
+  fabText: { fontSize: 28, fontWeight: '700', color: '#ffffff', marginTop: -2 },
+  // Modal
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'flex-end',
+  },
+  modalScroll: {
+    flexGrow: 1,
     justifyContent: 'flex-end',
   },
   modalContent: {
@@ -811,138 +784,123 @@ const styles = StyleSheet.create({
     borderTopRightRadius: 24,
     padding: 24,
     paddingBottom: 40,
-    maxHeight: '85%',
   },
-  modalTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
+  modalTitle: { fontSize: 22, fontWeight: 'bold', color: '#1f2937', marginBottom: 16 },
+  modalLabel: { fontSize: 13, fontWeight: '700', color: '#374151', marginBottom: 8, marginTop: 14 },
+  modalInput: {
+    backgroundColor: '#f3f4f6',
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 16,
     color: '#1f2937',
-    marginBottom: 4,
   },
-  modalTaskName: {
-    fontSize: 15,
-    color: '#6b7280',
-    marginBottom: 16,
-    fontStyle: 'italic',
-  },
-  modalLabel: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: '#374151',
-    marginBottom: 8,
-    marginTop: 14,
-  },
-  // AI Suggest
-  aiSuggestBtn: {
-    flexDirection: 'row',
+  // Category picker in modal
+  modalCatRow: { flexDirection: 'row', gap: 8 },
+  modalCatBtn: {
+    flex: 1,
     alignItems: 'center',
-    backgroundColor: '#faf5ff',
+    paddingVertical: 12,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    gap: 4,
+  },
+  modalCatLabel: { fontSize: 11, fontWeight: '800' },
+  // Frequency picker
+  freqRow: { flexDirection: 'row', gap: 8 },
+  freqBtn: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderRadius: 14,
+    backgroundColor: '#f3f4f6',
+    gap: 4,
+  },
+  freqBtnActive: { backgroundColor: '#059669' },
+  freqBtnText: { fontSize: 11, fontWeight: '700', color: '#6b7280' },
+  freqBtnTextActive: { color: '#ffffff' },
+  // Day selector
+  daySelector: {
+    marginTop: 12,
+    backgroundColor: '#f0fdf4',
     borderRadius: 14,
     padding: 14,
-    gap: 12,
-    borderWidth: 1.5,
-    borderColor: '#e9d5ff',
-    marginBottom: 12,
-  },
-  aiSuggestIcon: {
-    fontSize: 28,
-  },
-  aiSuggestText: {
-    fontSize: 15,
-    fontWeight: '800',
-    color: '#7c3aed',
-  },
-  aiSuggestSub: {
-    fontSize: 11,
-    color: '#a78bfa',
-    marginTop: 1,
-  },
-  aiResultBanner: {
-    backgroundColor: '#f0fdf4',
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 8,
     borderWidth: 1,
     borderColor: '#bbf7d0',
   },
-  aiResultText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#059669',
-    textAlign: 'center',
-  },
-  // Day picker
-  dayPickerRow: {
-    flexDirection: 'row',
-    gap: 6,
-    marginBottom: 8,
-  },
-  dayPickerBtn: {
+  daySelectorLabel: { fontSize: 12, fontWeight: '700', color: '#059669', marginBottom: 10 },
+  dayRow: { flexDirection: 'row', gap: 6 },
+  dayBtn: {
     flex: 1,
+    alignItems: 'center',
     paddingVertical: 10,
     borderRadius: 10,
-    backgroundColor: '#f3f4f6',
-    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderWidth: 1.5,
+    borderColor: '#e5e7eb',
   },
-  dayPickerBtnActive: {
-    backgroundColor: '#4F46E5',
-  },
-  dayPickerText: {
+  dayBtnActive: { backgroundColor: '#059669', borderColor: '#059669' },
+  dayBtnText: { fontSize: 11, fontWeight: '700', color: '#6b7280' },
+  dayBtnTextActive: { color: '#ffffff' },
+  daysSummary: {
     fontSize: 12,
     fontWeight: '600',
-    color: '#6b7280',
-  },
-  dayPickerTextActive: {
-    color: '#ffffff',
+    color: '#059669',
+    marginTop: 10,
+    textAlign: 'center',
   },
   // Time picker
-  timePickerButton: {
+  timeToggle: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
     backgroundColor: '#f3f4f6',
-    borderRadius: 12,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    gap: 8,
   },
-  timePickerValue: {
-    fontSize: 18,
-    fontWeight: '700',
-    color: '#4F46E5',
-  },
-  timePickerArrow: {
-    fontSize: 12,
-    color: '#9ca3af',
-  },
-  timePickerList: {
-    maxHeight: 150,
+  timeToggleIcon: { fontSize: 18 },
+  timeToggleText: { flex: 1, fontSize: 14, fontWeight: '600', color: '#374151' },
+  timeClear: { fontSize: 16, color: '#ef4444', fontWeight: '700', paddingHorizontal: 4 },
+  timeChevron: { fontSize: 10, color: '#9ca3af' },
+  timeGrid: {
+    marginTop: 8,
     backgroundColor: '#f9fafb',
-    borderRadius: 12,
-    marginTop: 4,
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    overflow: 'hidden',
+  },
+  timeGridList: { maxHeight: 200, paddingHorizontal: 4, paddingVertical: 6 },
+  timeGridRow: { flexDirection: 'row', flexWrap: 'wrap' },
+  timeSlot: {
+    width: '23%',
+    alignItems: 'center',
+    paddingVertical: 10,
+    marginHorizontal: 3,
+    marginVertical: 3,
+    borderRadius: 10,
+    backgroundColor: '#ffffff',
     borderWidth: 1,
     borderColor: '#e5e7eb',
   },
-  timePickerItem: {
-    paddingVertical: 10,
-    paddingHorizontal: 16,
+  timeSlotActive: { backgroundColor: '#059669', borderColor: '#059669' },
+  timeSlotText: { fontSize: 13, fontWeight: '700', color: '#374151' },
+  timeSlotTextActive: { color: '#ffffff' },
+  // Summary
+  summaryBox: {
+    marginTop: 16,
+    backgroundColor: '#eff6ff',
+    borderRadius: 14,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
   },
-  timePickerItemActive: {
-    backgroundColor: '#eef2ff',
-  },
-  timePickerItemText: {
-    fontSize: 15,
-    color: '#374151',
-  },
-  timePickerItemTextActive: {
-    color: '#4F46E5',
-    fontWeight: '700',
-  },
+  summaryTitle: { fontSize: 12, fontWeight: '800', color: '#1e40af', marginBottom: 4 },
+  summaryText: { fontSize: 14, fontWeight: '600', color: '#1f2937' },
+  summaryDetail: { fontSize: 12, color: '#6b7280', marginTop: 4 },
   // Modal actions
-  modalActions: {
-    flexDirection: 'row',
-    gap: 10,
-    marginTop: 20,
-  },
+  modalActions: { flexDirection: 'row', gap: 10, marginTop: 20 },
   cancelButton: {
     flex: 1,
     paddingVertical: 14,
@@ -950,21 +908,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#f3f4f6',
     alignItems: 'center',
   },
-  cancelText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#6b7280',
-  },
+  cancelText: { fontSize: 16, fontWeight: '600', color: '#6b7280' },
   saveButton: {
     flex: 1,
     paddingVertical: 14,
     borderRadius: 12,
-    backgroundColor: '#4F46E5',
+    backgroundColor: '#059669',
     alignItems: 'center',
   },
-  saveText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: '#ffffff',
-  },
+  saveText: { fontSize: 16, fontWeight: '700', color: '#ffffff' },
 });

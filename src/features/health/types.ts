@@ -30,8 +30,33 @@ export interface HealthStats {
   }>;
 }
 
+// --- Circadian Rhythm Types ---
+export interface SleepLog {
+  date: string;        // ISO date: "2026-02-15"
+  wakeTime?: string;   // HH:mm — hora real que despertó
+  bedTime?: string;    // HH:mm — hora real que fue a dormir
+  quality?: number;    // 1-5
+}
+
+export interface CircadianState {
+  targetWakeTime: string;   // HH:mm meta de despertar
+  targetBedTime: string;    // HH:mm meta de dormir
+  wakeAlarmEnabled: boolean;
+  bedAlarmEnabled: boolean;
+  sleepLogs: SleepLog[];
+}
+
+export interface CircadianActions {
+  setTargets: (wake: string, bed: string) => void;
+  toggleAlarm: (type: 'wake' | 'bed') => void;
+  logAction: (type: 'wake' | 'sleep') => void;
+  updateLog: (date: string, field: 'wakeTime' | 'bedTime', value: string) => void;
+  getTodayLog: () => SleepLog | undefined;
+  getWeekLogs: () => SleepLog[];
+}
+
 // Store Type
-export interface HealthState extends HealthStats {
+export interface HealthState extends HealthStats, CircadianState, CircadianActions {
   addSleepRecord: (record: Omit<SleepRecord, 'id' | 'createdAt' | 'updatedAt'>) => void;
   updateSleepRecord: (id: string, record: Partial<SleepRecord>) => void;
   deleteSleepRecord: (id: string) => void;

@@ -39,8 +39,8 @@ function TabNavigator() {
         name="Tasks"
         component={Tasks}
         options={{
-          tabBarLabel: 'Tasks',
-          tabBarIcon: () => <Text style={{ fontSize: 20 }}>📎</Text>,
+          tabBarLabel: 'Mi Plan',
+          tabBarIcon: () => <Text style={{ fontSize: 20 }}>🌱</Text>,
         }}
       />
       <Tab.Screen
