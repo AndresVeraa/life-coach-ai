@@ -13,7 +13,7 @@ import {
   PanResponder,
 } from 'react-native';
 import { useScheduleStore, SCHEDULE_COLORS } from '../store/schedule.store';
-import type { ScheduleBlock } from '../store/schedule.store';
+import type { ScheduleBlock, BlockNote } from '../store/schedule.store';
 import { useTasksStore, PRIORITY_CONFIG as TASK_PRIORITY, CATEGORY_CONFIG, timeToDecimal } from '../store/tasks.store';
 import { useHealthStore } from '../features/health/health.store';
 
@@ -83,7 +83,11 @@ export default function Home() {
     })
   ).current;
 
-  const { blocks, addBlock, updateBlock, removeBlock, toggleCompleted } = useScheduleStore();
+  const { blocks, addBlock, updateBlock, removeBlock, toggleCompleted, addNote, toggleNote, removeNote } = useScheduleStore();
+
+  // --- Notes modal state ---
+  const [notesBlock, setNotesBlock] = useState<ScheduleBlock | null>(null);
+  const [noteInput, setNoteInput] = useState('');
   const { tasks: allTasks, toggleTask, checkDailyReset } = useTasksStore();
   const { targetWakeTime, targetBedTime, getTodayLog } = useHealthStore();
   const scrollRef = useRef<ScrollView>(null);
@@ -525,6 +529,39 @@ export default function Home() {
                         </Text>
                       </TouchableOpacity>
                     </View>
+                    {/* --- Post-it notes preview --- */}
+                    {block.notes && block.notes.length > 0 && (
+                      <TouchableOpacity
+                        onPress={() => setNotesBlock(block)}
+                        activeOpacity={0.7}
+                        style={styles.notesPreview}
+                      >
+                        <Text style={styles.notesPreviewIcon}>📌</Text>
+                        <View style={{ flex: 1 }}>
+                          {block.notes.slice(0, 3).map((n) => (
+                            <View key={n.id} style={styles.notePreviewRow}>
+                              <Text style={{ fontSize: 11 }}>{n.done ? '☑' : '☐'}</Text>
+                              <Text
+                                style={[
+                                  styles.notePreviewText,
+                                  n.done && styles.notePreviewDone,
+                                ]}
+                                numberOfLines={1}
+                              >
+                                {n.text}
+                              </Text>
+                            </View>
+                          ))}
+                          {block.notes.length > 3 && (
+                            <Text style={styles.notePreviewMore}>+{block.notes.length - 3} más</Text>
+                          )}
+                        </View>
+                        <Text style={styles.notePreviewCount}>
+                          {block.notes.filter((n) => n.done).length}/{block.notes.length}
+                        </Text>
+                      </TouchableOpacity>
+                    )}
+
                     <View style={styles.blockFooter}>
                       {block.completed && (
                         <Text style={styles.completedBadge}>✔ Cumplido</Text>
@@ -532,7 +569,17 @@ export default function Home() {
                       {isPast && !block.completed && (
                         <Text style={styles.missedBadge}>⚠ Sin completar</Text>
                       )}
-                      <Text style={styles.blockHint}>Toca para editar · Mantén para eliminar</Text>
+
+                      {/* Add note button */}
+                      <TouchableOpacity
+                        onPress={() => setNotesBlock(block)}
+                        hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                        style={styles.addNoteBtn}
+                      >
+                        <Text style={styles.addNoteBtnText}>
+                          📌 {block.notes && block.notes.length > 0 ? 'Notas' : '+ Nota'}
+                        </Text>
+                      </TouchableOpacity>
                     </View>
                   </TouchableOpacity>
                 </View>
@@ -831,6 +878,103 @@ export default function Home() {
             </View>
           </View>
         </View>
+      </Modal>
+
+      {/* ========= Modal de Notas / Post-its ========= */}
+      <Modal
+        visible={!!notesBlock}
+        animationType="slide"
+        transparent
+        onRequestClose={() => { setNotesBlock(null); setNoteInput(''); }}
+      >
+        <TouchableOpacity
+          activeOpacity={1}
+          onPress={() => { setNotesBlock(null); setNoteInput(''); }}
+          style={styles.notesModalOverlay}
+        >
+          <TouchableOpacity activeOpacity={1} onPress={() => {}} style={styles.notesModalSheet}>
+            <View style={styles.notesModalHandle} />
+
+            {notesBlock && (
+              <>
+                {/* Header */}
+                <View style={styles.notesModalHeader}>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.notesModalTitle}>📌 Notas · {notesBlock.title}</Text>
+                    <Text style={styles.notesModalSub}>
+                      {formatHour(notesBlock.startHour)} → {formatHour(notesBlock.startHour + notesBlock.duration)} · {FULL_DAYS[notesBlock.dayIndex]}
+                    </Text>
+                  </View>
+                  <TouchableOpacity onPress={() => { setNotesBlock(null); setNoteInput(''); }}>
+                    <Text style={{ fontSize: 22, color: '#9ca3af' }}>✕</Text>
+                  </TouchableOpacity>
+                </View>
+
+                {/* Notes list */}
+                <ScrollView style={{ maxHeight: 300 }} showsVerticalScrollIndicator={false}>
+                  {(!notesBlock.notes || notesBlock.notes.length === 0) && (
+                    <Text style={styles.noteEmptyText}>
+                      Sin notas aún.{'\n'}Agrega recordatorios, materiales o tareas.
+                    </Text>
+                  )}
+                  {(notesBlock.notes || []).map((note) => (
+                    <View key={note.id} style={[styles.noteItem, note.done && styles.noteItemDone]}>
+                      <TouchableOpacity onPress={() => {
+                        toggleNote(notesBlock.id, note.id);
+                        // Refresh the notesBlock reference
+                        const updated = useScheduleStore.getState().blocks.find(b => b.id === notesBlock.id);
+                        if (updated) setNotesBlock({ ...updated });
+                      }}>
+                        <Text style={styles.noteCheckbox}>{note.done ? '✅' : '⬜'}</Text>
+                      </TouchableOpacity>
+                      <Text style={[styles.noteText, note.done && styles.noteTextDone]}>{note.text}</Text>
+                      <TouchableOpacity
+                        onPress={() => {
+                          removeNote(notesBlock.id, note.id);
+                          const updated = useScheduleStore.getState().blocks.find(b => b.id === notesBlock.id);
+                          if (updated) setNotesBlock({ ...updated });
+                        }}
+                        style={styles.noteDeleteBtn}
+                      >
+                        <Text style={styles.noteDeleteText}>✕</Text>
+                      </TouchableOpacity>
+                    </View>
+                  ))}
+                </ScrollView>
+
+                {/* Add note input */}
+                <View style={styles.noteInputRow}>
+                  <TextInput
+                    style={styles.noteInputField}
+                    placeholder="Ej: Llevar calculadora..."
+                    placeholderTextColor="#9ca3af"
+                    value={noteInput}
+                    onChangeText={setNoteInput}
+                    onSubmitEditing={() => {
+                      if (!noteInput.trim()) return;
+                      addNote(notesBlock.id, noteInput.trim());
+                      setNoteInput('');
+                      const updated = useScheduleStore.getState().blocks.find(b => b.id === notesBlock.id);
+                      if (updated) setNotesBlock({ ...updated });
+                    }}
+                  />
+                  <TouchableOpacity
+                    onPress={() => {
+                      if (!noteInput.trim()) return;
+                      addNote(notesBlock.id, noteInput.trim());
+                      setNoteInput('');
+                      const updated = useScheduleStore.getState().blocks.find(b => b.id === notesBlock.id);
+                      if (updated) setNotesBlock({ ...updated });
+                    }}
+                    style={[styles.noteAddBtn, { opacity: noteInput.trim() ? 1 : 0.4 }]}
+                  >
+                    <Text style={styles.noteAddBtnText}>+</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            )}
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
     </View>
   );
@@ -1460,5 +1604,171 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingVertical: 4,
     borderRadius: 8,
+  },
+
+  // --- Notes / Post-its ---
+  notesPreview: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    backgroundColor: 'rgba(255,255,255,0.65)',
+    borderRadius: 8,
+    padding: 6,
+    marginTop: 6,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(0,0,0,0.06)',
+  },
+  notesPreviewIcon: {
+    fontSize: 12,
+    marginTop: 1,
+  },
+  notePreviewRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginBottom: 1,
+  },
+  notePreviewText: {
+    fontSize: 11,
+    color: '#374151',
+    flex: 1,
+  },
+  notePreviewDone: {
+    textDecorationLine: 'line-through',
+    color: '#9ca3af',
+  },
+  notePreviewMore: {
+    fontSize: 10,
+    color: '#6b7280',
+    fontStyle: 'italic',
+    marginTop: 2,
+  },
+  notePreviewCount: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#4F46E5',
+    backgroundColor: '#eef2ff',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    overflow: 'hidden',
+  },
+  addNoteBtn: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    backgroundColor: 'rgba(79,70,229,0.08)',
+  },
+  addNoteBtnText: {
+    fontSize: 10,
+    color: '#4F46E5',
+    fontWeight: '600',
+  },
+
+  // Notes modal
+  notesModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+  },
+  notesModalSheet: {
+    backgroundColor: '#ffffff',
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 24,
+    maxHeight: '70%',
+  },
+  notesModalHandle: {
+    width: 36,
+    height: 4,
+    backgroundColor: '#d1d5db',
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: 10,
+  },
+  notesModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  notesModalTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#1f2937',
+  },
+  notesModalSub: {
+    fontSize: 11,
+    color: '#6b7280',
+    marginTop: 2,
+  },
+  noteItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f9fafb',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 6,
+    gap: 10,
+    borderWidth: 1,
+    borderColor: '#f3f4f6',
+  },
+  noteItemDone: {
+    backgroundColor: '#f0fdf4',
+    borderColor: '#d1fae5',
+  },
+  noteCheckbox: {
+    fontSize: 18,
+  },
+  noteText: {
+    flex: 1,
+    fontSize: 14,
+    color: '#1f2937',
+  },
+  noteTextDone: {
+    textDecorationLine: 'line-through',
+    color: '#9ca3af',
+  },
+  noteDeleteBtn: {
+    padding: 4,
+  },
+  noteDeleteText: {
+    fontSize: 14,
+    color: '#ef4444',
+  },
+  noteInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+    gap: 8,
+  },
+  noteInputField: {
+    flex: 1,
+    backgroundColor: '#f3f4f6',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: '#1f2937',
+  },
+  noteAddBtn: {
+    backgroundColor: '#4F46E5',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  noteAddBtnText: {
+    color: '#ffffff',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  noteEmptyText: {
+    textAlign: 'center',
+    color: '#9ca3af',
+    fontSize: 13,
+    paddingVertical: 20,
   },
 });

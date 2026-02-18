@@ -2,6 +2,14 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+// --- Notas interactivas (post-its) vinculadas a un bloque ---
+export interface BlockNote {
+  id: string;
+  text: string;
+  done: boolean;
+  createdAt: number;
+}
+
 export interface ScheduleBlock {
   id: string;
   dayIndex: number; // 0 = Domingo, 1 = Lunes, ... 6 = Sábado
@@ -11,6 +19,7 @@ export interface ScheduleBlock {
   color: string;
   type: 'class' | 'work' | 'other';
   completed: boolean;
+  notes?: BlockNote[];  // Post-its / checklist del bloque
 }
 
 interface ScheduleState {
@@ -20,6 +29,10 @@ interface ScheduleState {
   removeBlock: (id: string) => void;
   toggleCompleted: (id: string) => void;
   getBlocksForDay: (dayIndex: number) => ScheduleBlock[];
+  // --- Note actions ---
+  addNote: (blockId: string, text: string) => void;
+  toggleNote: (blockId: string, noteId: string) => void;
+  removeNote: (blockId: string, noteId: string) => void;
 }
 
 // Colores pastel para las materias
@@ -71,6 +84,45 @@ export const useScheduleStore = create<ScheduleState>()(
           .blocks.filter((b) => b.dayIndex === dayIndex)
           .sort((a, b) => a.startHour - b.startHour);
       },
+
+      // --- Note actions ---
+      addNote: (blockId, text) =>
+        set((state) => ({
+          blocks: state.blocks.map((b) => {
+            if (b.id !== blockId) return b;
+            const note: BlockNote = {
+              id: Date.now().toString() + Math.random().toString(36).slice(2, 5),
+              text,
+              done: false,
+              createdAt: Date.now(),
+            };
+            return { ...b, notes: [...(b.notes || []), note] };
+          }),
+        })),
+
+      toggleNote: (blockId, noteId) =>
+        set((state) => ({
+          blocks: state.blocks.map((b) => {
+            if (b.id !== blockId) return b;
+            return {
+              ...b,
+              notes: (b.notes || []).map((n) =>
+                n.id === noteId ? { ...n, done: !n.done } : n
+              ),
+            };
+          }),
+        })),
+
+      removeNote: (blockId, noteId) =>
+        set((state) => ({
+          blocks: state.blocks.map((b) => {
+            if (b.id !== blockId) return b;
+            return {
+              ...b,
+              notes: (b.notes || []).filter((n) => n.id !== noteId),
+            };
+          }),
+        })),
     }),
     {
       name: 'schedule-storage',
