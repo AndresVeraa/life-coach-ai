@@ -23,7 +23,7 @@ const Tab = createBottomTabNavigator();
 
 // ── Tab items config ──
 const TAB_ITEMS = [
-  { key: 'Home', label: 'Home', icon: '🏠', activeColor: '#4F46E5' },
+  { key: 'Home', label: 'Agenda', icon: '📅', activeColor: '#4F46E5' },
   { key: 'Tasks', label: 'Mi Plan', icon: '🌱', activeColor: '#059669' },
   { key: 'Health', label: 'Salud', icon: '🏥', activeColor: '#dc2626' },
   { key: 'Coach', label: 'Coach', icon: '🤖', activeColor: '#7c3aed' },

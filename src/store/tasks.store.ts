@@ -6,7 +6,7 @@ import { isSameDay } from 'date-fns';
 // --- Types ---
 export type Priority = 'urgent' | 'medium' | 'normal';
 export type Tag = 'universidad' | 'personal' | 'proyectos';
-export type Category = 'cuerpo' | 'mente' | 'carrera' | 'alma';
+export type Category = 'cuerpo' | 'mente' | 'carrera' | 'alma' | 'deporte' | 'cuidado' | 'hidratacion';
 export type Frequency = 'once' | 'daily' | 'custom';
 
 export interface Task {
@@ -47,13 +47,16 @@ export const CATEGORY_CONFIG: Record<
   Category,
   { label: string; icon: string; color: string; bg: string; gradient: string }
 > = {
-  cuerpo: { label: 'Cuerpo', icon: '🏋️', color: '#ea580c', bg: '#fff7ed', gradient: '#fed7aa' },
-  mente:  { label: 'Mente',  icon: '📚', color: '#7c3aed', bg: '#faf5ff', gradient: '#e9d5ff' },
-  carrera: { label: 'Carrera', icon: '💼', color: '#2563eb', bg: '#eff6ff', gradient: '#bfdbfe' },
-  alma:   { label: 'Alma',   icon: '❤️', color: '#dc2626', bg: '#fef2f2', gradient: '#fecaca' },
+  cuerpo:      { label: 'Cuerpo',      icon: '🏋️', color: '#ea580c', bg: '#fff7ed', gradient: '#fed7aa' },
+  mente:       { label: 'Mente',       icon: '📚', color: '#7c3aed', bg: '#faf5ff', gradient: '#e9d5ff' },
+  carrera:     { label: 'Carrera',     icon: '💼', color: '#2563eb', bg: '#eff6ff', gradient: '#bfdbfe' },
+  alma:        { label: 'Alma',        icon: '❤️', color: '#dc2626', bg: '#fef2f2', gradient: '#fecaca' },
+  deporte:     { label: 'Deporte',     icon: '⚽', color: '#059669', bg: '#ecfdf5', gradient: '#a7f3d0' },
+  cuidado:     { label: 'Cuidado Personal', icon: '💆', color: '#db2777', bg: '#fdf2f8', gradient: '#fbcfe8' },
+  hidratacion: { label: 'Hidratación', icon: '💧', color: '#0891b2', bg: '#ecfeff', gradient: '#a5f3fc' },
 };
 
-export const CATEGORIES: Category[] = ['cuerpo', 'mente', 'carrera', 'alma'];
+export const CATEGORIES: Category[] = ['cuerpo', 'mente', 'carrera', 'alma', 'deporte', 'cuidado', 'hidratacion'];
 
 export const FREQUENCY_CONFIG: Record<Frequency, { label: string; icon: string }> = {
   once:   { label: 'Una vez', icon: '1️⃣' },
@@ -72,12 +75,22 @@ export interface QuickHabit {
 export const QUICK_HABITS: QuickHabit[] = [
   { title: 'Leer 10 páginas', category: 'mente', icon: '📖', frequency: 'daily', reminderTime: '21:00' },
   { title: 'Meditar 5 min', category: 'alma', icon: '🧘', frequency: 'daily', reminderTime: '06:30' },
-  { title: 'Beber agua', category: 'cuerpo', icon: '💧', frequency: 'daily', reminderTime: '08:00' },
-  { title: '30 min ejercicio', category: 'cuerpo', icon: '🏃', frequency: 'custom', reminderTime: '07:00' },
+  { title: 'Beber agua', category: 'hidratacion', icon: '💧', frequency: 'daily', reminderTime: '08:00' },
+  { title: '30 min ejercicio', category: 'deporte', icon: '🏃', frequency: 'custom', reminderTime: '07:00' },
   { title: 'Estudiar 25 min', category: 'carrera', icon: '📝', frequency: 'daily', reminderTime: '16:00' },
   { title: 'Escribir diario', category: 'alma', icon: '✍️', frequency: 'daily', reminderTime: '22:00' },
   { title: 'Estiramientos', category: 'cuerpo', icon: '🤸', frequency: 'daily', reminderTime: '07:30' },
   { title: 'Podcast educativo', category: 'mente', icon: '🎧', frequency: 'custom', reminderTime: '12:00' },
+  // Deporte
+  { title: 'Correr 20 min', category: 'deporte', icon: '🏅', frequency: 'custom', reminderTime: '06:30' },
+  { title: 'Rutina de fuerza', category: 'deporte', icon: '💪', frequency: 'custom', reminderTime: '17:00' },
+  // Cuidado Personal
+  { title: 'Skincare mañana', category: 'cuidado', icon: '🧴', frequency: 'daily', reminderTime: '07:00' },
+  { title: 'Skincare noche', category: 'cuidado', icon: '🌙', frequency: 'daily', reminderTime: '21:30' },
+  { title: 'Cuidado dental', category: 'cuidado', icon: '🪥', frequency: 'daily', reminderTime: '07:15' },
+  // Hidratación
+  { title: '8 vasos de agua', category: 'hidratacion', icon: '🥤', frequency: 'daily', reminderTime: '09:00' },
+  { title: 'Té / infusión', category: 'hidratacion', icon: '🍵', frequency: 'daily', reminderTime: '15:00' },
 ];
 
 // Helper: genera opciones de hora cada 30 min (6:00 - 22:00)

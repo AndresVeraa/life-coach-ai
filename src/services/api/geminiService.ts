@@ -30,7 +30,7 @@ Formatos JSON soportados (SIEMPRE dentro de \`\`\`json ... \`\`\`):
 
 Para Hábitos/Tareas:
 \`\`\`json
-{"tool":"add_habit","args":{"title":"...","category":"cuerpo"|"mente"|"carrera"|"alma","frequency":"once"|"daily","reminderTime":"HH:mm"}}
+{"tool":"add_habit","args":{"title":"...","category":"cuerpo"|"mente"|"carrera"|"alma"|"deporte"|"cuidado"|"hidratacion","frequency":"once"|"daily","reminderTime":"HH:mm"}}
 \`\`\`
 
 Para Bloques de Horario/Clases:

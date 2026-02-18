@@ -45,6 +45,7 @@ export default function Tasks() {
   const [formReminderTime, setFormReminderTime] = useState<string | null>(null);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [selectedQuickCat, setSelectedQuickCat] = useState<Category | 'all'>('all');
 
   // Daily reset on mount
   useEffect(() => {
@@ -80,12 +81,9 @@ export default function Tasks() {
   const progressPercent = todayTotal > 0 ? Math.round((todayDone / todayTotal) * 100) : 0;
 
   const categoryStats = useMemo(() => {
-    const stats: Record<Category, { total: number; done: number }> = {
-      cuerpo: { total: 0, done: 0 },
-      mente: { total: 0, done: 0 },
-      carrera: { total: 0, done: 0 },
-      alma: { total: 0, done: 0 },
-    };
+    const stats = Object.fromEntries(
+      CATEGORIES.map(c => [c, { total: 0, done: 0 }])
+    ) as Record<Category, { total: number; done: number }>;
     todayTasks.forEach((t: Task) => {
       const cat = t.category || 'carrera';
       stats[cat].total++;
@@ -93,6 +91,11 @@ export default function Tasks() {
     });
     return stats;
   }, [todayTasks]);
+
+  const filteredQuickHabits = useMemo(() => {
+    if (selectedQuickCat === 'all') return QUICK_HABITS;
+    return QUICK_HABITS.filter(h => h.category === selectedQuickCat);
+  }, [selectedQuickCat]);
 
   // --- Handlers ---
   const openModal = (
@@ -226,16 +229,59 @@ export default function Tasks() {
       </View>
 
       <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
-        {/* Quick Habits Carousel */}
+        {/* Quick Habits */}
         <View style={styles.quickSection}>
           <Text style={styles.quickSectionTitle}>⚡ Acciones Rápidas</Text>
-          <Text style={styles.quickSectionSub}>Un toque para comenzar un hábito</Text>
+          <Text style={styles.quickSectionSub}>Filtra por área de vida</Text>
+          {/* Category filter tabs */}
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.catFilterScroll}
+          >
+            <TouchableOpacity
+              onPress={() => setSelectedQuickCat('all')}
+              style={[
+                styles.catFilterChip,
+                selectedQuickCat === 'all' && styles.catFilterChipActive,
+              ]}
+            >
+              <Text style={[
+                styles.catFilterText,
+                selectedQuickCat === 'all' && styles.catFilterTextActive,
+              ]}>
+                🌟 Todos
+              </Text>
+            </TouchableOpacity>
+            {CATEGORIES.map((cat) => {
+              const cc = CATEGORY_CONFIG[cat];
+              const isActive = selectedQuickCat === cat;
+              return (
+                <TouchableOpacity
+                  key={cat}
+                  onPress={() => setSelectedQuickCat(cat)}
+                  style={[
+                    styles.catFilterChip,
+                    isActive && { backgroundColor: cc.color },
+                  ]}
+                >
+                  <Text style={[
+                    styles.catFilterText,
+                    isActive && styles.catFilterTextActive,
+                  ]}>
+                    {cc.icon} {cc.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+          {/* Habits carousel */}
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={false}
             contentContainerStyle={styles.quickScroll}
           >
-            {QUICK_HABITS.map((habit, idx) => {
+            {filteredQuickHabits.map((habit, idx) => {
               const hc = CATEGORY_CONFIG[habit.category];
               return (
                 <TouchableOpacity
@@ -410,7 +456,7 @@ export default function Tasks() {
 
               {/* Step 2: Category */}
               <Text style={styles.modalLabel}>Área de vida</Text>
-              <View style={styles.modalCatRow}>
+              <View style={styles.modalCatGrid}>
                 {CATEGORIES.map((cat) => {
                   const cc = CATEGORY_CONFIG[cat];
                   const active = formCategory === cat;
@@ -419,19 +465,33 @@ export default function Tasks() {
                       key={cat}
                       onPress={() => setFormCategory(cat)}
                       style={[
-                        styles.modalCatBtn,
-                        { backgroundColor: active ? cc.color : cc.bg, borderColor: cc.gradient },
+                        styles.modalCatCard,
+                        {
+                          backgroundColor: active ? cc.color : cc.bg,
+                          borderColor: active ? cc.color : cc.gradient,
+                        },
                       ]}
                     >
-                      <Text style={{ fontSize: 20 }}>{cc.icon}</Text>
+                      <View style={[
+                        styles.modalCatIconWrap,
+                        { backgroundColor: active ? 'rgba(255,255,255,0.25)' : cc.color + '15' },
+                      ]}>
+                        <Text style={{ fontSize: 20 }}>{cc.icon}</Text>
+                      </View>
                       <Text
                         style={[
-                          styles.modalCatLabel,
+                          styles.modalCatCardLabel,
                           { color: active ? '#ffffff' : cc.color },
                         ]}
+                        numberOfLines={1}
                       >
                         {cc.label}
                       </Text>
+                      {active && (
+                        <View style={styles.modalCatCheck}>
+                          <Text style={{ fontSize: 10, color: '#fff' }}>✓</Text>
+                        </View>
+                      )}
                     </TouchableOpacity>
                   );
                 })}
@@ -614,17 +674,24 @@ const styles = StyleSheet.create({
     fontVariant: ['tabular-nums'],
   },
   progressLabel: { fontSize: 9, color: '#a7f3d0', fontWeight: '600' },
-  catStatsRow: { flexDirection: 'row', gap: 8, marginTop: 14, marginBottom: 4 },
+  catStatsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginTop: 14,
+    marginBottom: 4,
+    justifyContent: 'center',
+  },
   catStatPill: {
-    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 4,
-    paddingVertical: 6,
+    paddingVertical: 5,
+    paddingHorizontal: 10,
     borderRadius: 10,
   },
-  catStatText: { fontSize: 12, fontWeight: '800' },
+  catStatText: { fontSize: 11, fontWeight: '800' },
   progressBarBg: {
     height: 5,
     backgroundColor: 'rgba(255,255,255,0.2)',
@@ -651,6 +718,17 @@ const styles = StyleSheet.create({
   quickCardTitle: { fontSize: 12, fontWeight: '700', textAlign: 'center', lineHeight: 16 },
   quickCardCatBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, marginTop: 2 },
   quickCardCatText: { fontSize: 9, fontWeight: '800' },
+  // Category filter tabs
+  catFilterScroll: { gap: 8, paddingRight: 16, marginBottom: 12 },
+  catFilterChip: {
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+    borderRadius: 20,
+    backgroundColor: '#f3f4f6',
+  },
+  catFilterChipActive: { backgroundColor: '#059669' },
+  catFilterText: { fontSize: 12, fontWeight: '700', color: '#6b7280' },
+  catFilterTextActive: { color: '#ffffff' },
   // Filters
   filtersRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 16, paddingVertical: 10 },
   filterChip: {
@@ -795,17 +873,41 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#1f2937',
   },
-  // Category picker in modal
-  modalCatRow: { flexDirection: 'row', gap: 8 },
-  modalCatBtn: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderRadius: 14,
-    borderWidth: 1.5,
-    gap: 4,
+  // Category picker in modal (responsive grid)
+  modalCatGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
   },
-  modalCatLabel: { fontSize: 11, fontWeight: '800' },
+  modalCatCard: {
+    width: '47%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+    borderRadius: 14,
+    borderWidth: 2,
+    gap: 8,
+  },
+  modalCatIconWrap: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalCatCardLabel: { fontSize: 12, fontWeight: '800', flexShrink: 1 },
+  modalCatCheck: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: 'rgba(255,255,255,0.35)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   // Frequency picker
   freqRow: { flexDirection: 'row', gap: 8 },
   freqBtn: {

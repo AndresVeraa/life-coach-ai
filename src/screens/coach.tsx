@@ -224,7 +224,8 @@ export default function Coach() {
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: '#ffffff' }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior="padding"
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
     >
       {/* Header */}
       <View
