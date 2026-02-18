@@ -1,102 +1,94 @@
-// Audit & Distraction Types
-export type DistractionCategory = 'redes-sociales' | 'personas' | 'entretenimiento' | 'tareas-administrativas' | 'otro';
+// ===== Audit Analytics Types =====
 
-export interface DistractionEvent {
+export type DistractionCategory =
+  | 'redes-sociales'
+  | 'ruido'
+  | 'pereza'
+  | 'personas'
+  | 'entretenimiento'
+  | 'otro';
+
+export interface AuditEntry {
   id: string;
-  category: DistractionCategory;
-  description: string;
-  estimatedMinutes: number;
   timestamp: number;
-  date: string; // ISO date
+  type: 'focus' | 'distraction';
+  durationMinutes: number;
+  category: string; // Ej: 'Estudio', 'Instagram', 'Ruido'
+  note?: string;
 }
 
-export interface AuditSession {
-  id: string;
-  date: string; // ISO date (YYYY-MM-DD)
-  distractions: DistractionEvent[];
-  totalMinutesLost: number;
-  completedAudit: boolean; // ¿Usuario completó el resumen?
-  notes: string;
-  createdAt: number;
-  updatedAt: number;
+export interface AuditStats {
+  score: number;
+  focusTime: number;
+  lostTime: number;
+  topDistraction: string;
+  sessionCount: number;
 }
 
-export interface AuditMetrics {
-  totalSessions: number; // Cuántos días auditados
-  totalMinutesLost: number; // Total histórico
-  averageMinutesPerDay: number; // Promedio diario
-  topCategory: DistractionCategory | null; // Categoría más frecuente
-  categoryBreakdown: {
-    [key in DistractionCategory]: {
-      count: number;
-      totalMinutes: number;
-      percentage: number;
-    };
-  };
-  last7Days: Array<{
-    date: string;
-    minutesLost: number;
-    distractionCount: number;
-  }>;
-  weeklyTrend: 'improving' | 'declining' | 'stable'; // Tendencia de la semana
-}
-
-export interface AuditStore {
-  // Estado
-  sessions: AuditSession[];
-  currentSessionId: string | null;
-  metrics: AuditMetrics;
-
-  // Acciones
-  createSession: () => void;
-  addDistraction: (
-    category: DistractionCategory,
-    description: string,
-    estimatedMinutes: number
-  ) => void;
-  editDistraction: (id: string, updates: Partial<DistractionEvent>) => void;
-  deleteDistraction: (id: string) => void;
-  completeSession: (notes: string) => void;
-  getCurrentSession: () => AuditSession | null;
-  getSessionsByDate: (date: string) => AuditSession | null;
-  getMetrics: () => AuditMetrics;
-  getSessions: () => AuditSession[];
+export interface AuditState {
+  entries: AuditEntry[];
+  addEntry: (entry: Omit<AuditEntry, 'id'>) => void;
+  removeEntry: (id: string) => void;
+  getStats: (range: 'day' | 'week' | 'month') => AuditStats;
+  getEntries: (range: 'day' | 'week' | 'month') => AuditEntry[];
   clearHistory: () => void;
 }
 
-// Mapping de categorías a emojis y colores
-export const CATEGORY_CONFIG: Record<
+// Category config for distraction radar
+export const DISTRACTION_CATEGORIES: Record<
   DistractionCategory,
-  { emoji: string; label: string; color: string; examples: string[] }
+  { emoji: string; label: string; color: string; bg: string; examples: string[] }
 > = {
   'redes-sociales': {
     emoji: '📱',
     label: 'Redes Sociales',
-    color: 'bg-blue-100',
-    examples: ['Instagram', 'TikTok', 'Twitter', 'Facebook'],
+    color: '#3B82F6',
+    bg: '#EFF6FF',
+    examples: ['Instagram', 'TikTok', 'Twitter', 'WhatsApp'],
+  },
+  ruido: {
+    emoji: '🔊',
+    label: 'Ruido / Ambiente',
+    color: '#F59E0B',
+    bg: '#FFFBEB',
+    examples: ['Vecinos', 'Construcción', 'Música ajena', 'Tráfico'],
+  },
+  pereza: {
+    emoji: '😴',
+    label: 'Pereza / Fatiga',
+    color: '#EF4444',
+    bg: '#FEF2F2',
+    examples: ['No me levanto', 'Postergo', 'Sin ganas', 'Cansancio'],
   },
   personas: {
     emoji: '👥',
     label: 'Personas',
-    color: 'bg-green-100',
-    examples: ['Conversaciones', 'Interrupciones', 'Llamadas', 'Mensajes'],
+    color: '#10B981',
+    bg: '#ECFDF5',
+    examples: ['Conversaciones', 'Interrupciones', 'Llamadas'],
   },
   entretenimiento: {
     emoji: '🎮',
     label: 'Entretenimiento',
-    color: 'bg-purple-100',
-    examples: ['Videos', 'Juegos', 'Series', 'Música'],
-  },
-  'tareas-administrativas': {
-    emoji: '📋',
-    label: 'Tareas Admin',
-    color: 'bg-yellow-100',
-    examples: ['Emails', 'Reuniones', 'Reportes', 'Documentos'],
+    color: '#8B5CF6',
+    bg: '#F5F3FF',
+    examples: ['Videos', 'Juegos', 'Series', 'YouTube'],
   },
   otro: {
     emoji: '🤷',
     label: 'Otro',
-    color: 'bg-gray-100',
-    examples: ['Descansos', 'Distracciones varias'],
+    color: '#6B7280',
+    bg: '#F3F4F6',
+    examples: ['Varios', 'Tareas admin', 'Imprevistos'],
   },
 };
+
+// Focus categories
+export const FOCUS_CATEGORIES = [
+  { label: 'Estudio', emoji: '📚' },
+  { label: 'Trabajo', emoji: '💼' },
+  { label: 'Lectura', emoji: '📖' },
+  { label: 'Proyecto', emoji: '🚀' },
+  { label: 'Ejercicio', emoji: '🏋️' },
+  { label: 'Meditación', emoji: '🧘' },
+];

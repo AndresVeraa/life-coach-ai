@@ -1,305 +1,86 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {
-  AuditSession,
-  AuditMetrics,
-  AuditStore,
-  DistractionCategory,
-  DistractionEvent,
-  CATEGORY_CONFIG,
-} from './types';
+import { startOfDay, startOfWeek, startOfMonth, isAfter } from 'date-fns';
+import { AuditEntry, AuditState, AuditStats } from './types';
 
-// Helper: obtener fecha ISO actual
-function getISODate(date?: Date): string {
-  const d = date || new Date();
-  return d.toISOString().split('T')[0];
-}
-
-// Helper: calcular métricas
-function calculateMetrics(sessions: AuditSession[]): AuditMetrics {
-  if (sessions.length === 0) {
-    return {
-      totalSessions: 0,
-      totalMinutesLost: 0,
-      averageMinutesPerDay: 0,
-      topCategory: null,
-      categoryBreakdown: {
-        'redes-sociales': { count: 0, totalMinutes: 0, percentage: 0 },
-        personas: { count: 0, totalMinutes: 0, percentage: 0 },
-        entretenimiento: { count: 0, totalMinutes: 0, percentage: 0 },
-        'tareas-administrativas': { count: 0, totalMinutes: 0, percentage: 0 },
-        otro: { count: 0, totalMinutes: 0, percentage: 0 },
-      },
-      last7Days: [],
-      weeklyTrend: 'stable',
-    };
-  }
-
-  // Total y promedio
-  const totalMinutesLost = sessions.reduce(
-    (sum, s) => sum + (s.totalMinutesLost || 0),
-    0
-  );
-  const averageMinutesPerDay =
-    sessions.length > 0 ? Math.round(totalMinutesLost / sessions.length) : 0;
-
-  // Desglose por categoría
-  const categoryBreakdown: Record<
-    DistractionCategory,
-    { count: number; totalMinutes: number; percentage: number }
-  > = {
-    'redes-sociales': { count: 0, totalMinutes: 0, percentage: 0 },
-    personas: { count: 0, totalMinutes: 0, percentage: 0 },
-    entretenimiento: { count: 0, totalMinutes: 0, percentage: 0 },
-    'tareas-administrativas': { count: 0, totalMinutes: 0, percentage: 0 },
-    otro: { count: 0, totalMinutes: 0, percentage: 0 },
-  };
-
-  sessions.forEach((session) => {
-    session.distractions.forEach((distraction) => {
-      categoryBreakdown[distraction.category].count++;
-      categoryBreakdown[distraction.category].totalMinutes +=
-        distraction.estimatedMinutes;
-    });
-  });
-
-  // Calcula porcentajes
-  (Object.keys(categoryBreakdown) as DistractionCategory[]).forEach((cat) => {
-    const percentage =
-      totalMinutesLost > 0
-        ? Math.round(
-            (categoryBreakdown[cat].totalMinutes / totalMinutesLost) * 100
-          )
-        : 0;
-    categoryBreakdown[cat].percentage = percentage;
-  });
-
-  // Top category
-  const topCategory = (
-    Object.keys(categoryBreakdown) as DistractionCategory[]
-  ).reduce((top, cat) =>
-    categoryBreakdown[cat].count > categoryBreakdown[top].count ? cat : top
-  ) as DistractionCategory;
-
-  // Últimos 7 días
-  const last7Days = [];
-  for (let i = 6; i >= 0; i--) {
-    const date = new Date();
-    date.setDate(date.getDate() - i);
-    const dateStr = getISODate(date);
-    const session = sessions.find((s) => s.date === dateStr);
-    last7Days.push({
-      date: dateStr,
-      minutesLost: session?.totalMinutesLost || 0,
-      distractionCount: session?.distractions.length || 0,
-    });
-  }
-
-  // Calcular tendencia de la semana
-  const last3Days = last7Days.slice(-3).map((d) => d.minutesLost);
-  const first4Days = last7Days.slice(0, 4).map((d) => d.minutesLost);
-  const avgLast3 = last3Days.reduce((a, b) => a + b, 0) / 3;
-  const avgFirst4 = first4Days.reduce((a, b) => a + b, 0) / 4;
-  let weeklyTrend: 'improving' | 'declining' | 'stable' = 'stable';
-  if (avgLast3 < avgFirst4 * 0.9) {
-    weeklyTrend = 'improving';
-  } else if (avgLast3 > avgFirst4 * 1.1) {
-    weeklyTrend = 'declining';
-  }
-
-  return {
-    totalSessions: sessions.length,
-    totalMinutesLost,
-    averageMinutesPerDay,
-    topCategory: topCategory && categoryBreakdown[topCategory].count > 0 ? topCategory : null,
-    categoryBreakdown,
-    last7Days,
-    weeklyTrend,
-  };
-}
-
-export const useAuditStore = create<AuditStore>()(
+export const useAuditStore = create<AuditState>()(
   persist(
     (set, get) => ({
-      sessions: [],
-      currentSessionId: null,
-      metrics: calculateMetrics([]),
+      entries: [],
 
-      createSession: () => {
-        const today = getISODate();
-        const existingSession = get().sessions.find((s) => s.date === today);
+      addEntry: (entry) =>
+        set((state) => ({
+          entries: [{ ...entry, id: Date.now().toString() }, ...state.entries],
+        })),
 
-        if (!existingSession) {
-          const newSession: AuditSession = {
-            id: Date.now().toString(),
-            date: today,
-            distractions: [],
-            totalMinutesLost: 0,
-            completedAudit: false,
-            notes: '',
-            createdAt: Date.now(),
-            updatedAt: Date.now(),
-          };
+      removeEntry: (id) =>
+        set((state) => ({
+          entries: state.entries.filter((e) => e.id !== id),
+        })),
 
-          set((state) => {
-            const newSessions = [newSession, ...state.sessions];
-            return {
-              sessions: newSessions,
-              currentSessionId: newSession.id,
-              metrics: calculateMetrics(newSessions),
-            };
-          });
-        } else {
-          set({ currentSessionId: existingSession.id });
-        }
+      clearHistory: () => set({ entries: [] }),
+
+      getEntries: (range) => {
+        const { entries } = get();
+        const now = new Date();
+        let startDate = startOfDay(now);
+        if (range === 'week') startDate = startOfWeek(now, { weekStartsOn: 1 });
+        if (range === 'month') startDate = startOfMonth(now);
+        return entries.filter((e) => isAfter(new Date(e.timestamp), startDate));
       },
 
-      addDistraction: (category, description, estimatedMinutes) => {
-        set((state) => {
-          const updatedSessions = state.sessions.map((session) => {
-            if (session.id === state.currentSessionId) {
-              const newDistraction: DistractionEvent = {
-                id: Date.now().toString(),
-                category,
-                description,
-                estimatedMinutes,
-                timestamp: Date.now(),
-                date: session.date,
-              };
+      getStats: (range): AuditStats => {
+        const { entries } = get();
+        const now = new Date();
+        let startDate = startOfDay(now);
+        if (range === 'week') startDate = startOfWeek(now, { weekStartsOn: 1 });
+        if (range === 'month') startDate = startOfMonth(now);
 
-              const updatedDistractions = [newDistraction, ...session.distractions];
-              const totalMinutesLost = updatedDistractions.reduce(
-                (sum, d) => sum + d.estimatedMinutes,
-                0
-              );
-
-              return {
-                ...session,
-                distractions: updatedDistractions,
-                totalMinutesLost,
-                updatedAt: Date.now(),
-              };
-            }
-            return session;
-          });
-
-          return {
-            sessions: updatedSessions,
-            metrics: calculateMetrics(updatedSessions),
-          };
-        });
-      },
-
-      editDistraction: (id, updates) => {
-        set((state) => {
-          const updatedSessions = state.sessions.map((session) => {
-            if (session.id === state.currentSessionId) {
-              const updatedDistractions = session.distractions.map((d) =>
-                d.id === id ? { ...d, ...updates } : d
-              );
-
-              const totalMinutesLost = updatedDistractions.reduce(
-                (sum, d) => sum + d.estimatedMinutes,
-                0
-              );
-
-              return {
-                ...session,
-                distractions: updatedDistractions,
-                totalMinutesLost,
-                updatedAt: Date.now(),
-              };
-            }
-            return session;
-          });
-
-          return {
-            sessions: updatedSessions,
-            metrics: calculateMetrics(updatedSessions),
-          };
-        });
-      },
-
-      deleteDistraction: (id) => {
-        set((state) => {
-          const updatedSessions = state.sessions.map((session) => {
-            if (session.id === state.currentSessionId) {
-              const updatedDistractions = session.distractions.filter(
-                (d) => d.id !== id
-              );
-
-              const totalMinutesLost = updatedDistractions.reduce(
-                (sum, d) => sum + d.estimatedMinutes,
-                0
-              );
-
-              return {
-                ...session,
-                distractions: updatedDistractions,
-                totalMinutesLost,
-                updatedAt: Date.now(),
-              };
-            }
-            return session;
-          });
-
-          return {
-            sessions: updatedSessions,
-            metrics: calculateMetrics(updatedSessions),
-          };
-        });
-      },
-
-      completeSession: (notes) => {
-        set((state) => {
-          const updatedSessions = state.sessions.map((session) => {
-            if (session.id === state.currentSessionId) {
-              return {
-                ...session,
-                completedAudit: true,
-                notes,
-                updatedAt: Date.now(),
-              };
-            }
-            return session;
-          });
-
-          return {
-            sessions: updatedSessions,
-            metrics: calculateMetrics(updatedSessions),
-          };
-        });
-      },
-
-      getCurrentSession: () => {
-        const { sessions, currentSessionId } = get();
-        return sessions.find((s) => s.id === currentSessionId) || null;
-      },
-
-      getSessionsByDate: (date: string) => {
-        const { sessions } = get();
-        return sessions.find((s) => s.date === date) || null;
-      },
-
-      getMetrics: () => get().metrics,
-
-      getSessions: () => {
-        return get().sessions.sort(
-          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+        const filtered = entries.filter((e) =>
+          isAfter(new Date(e.timestamp), startDate)
         );
-      },
 
-      clearHistory: () => {
-        set({
-          sessions: [],
-          currentSessionId: null,
-          metrics: calculateMetrics([]),
-        });
+        // 1. Focus time & lost time
+        const focusTime = filtered
+          .filter((e) => e.type === 'focus')
+          .reduce((acc, curr) => acc + curr.durationMinutes, 0);
+
+        const lostTime = filtered
+          .filter((e) => e.type === 'distraction')
+          .reduce((acc, curr) => acc + curr.durationMinutes, 0);
+
+        // 2. Productivity Score
+        const totalTime = focusTime + lostTime;
+        let score = 100;
+        if (totalTime > 0) {
+          score = Math.round((focusTime / totalTime) * 100);
+        }
+
+        // 3. Top distraction category
+        const distractionCounts: Record<string, number> = {};
+        filtered
+          .filter((e) => e.type === 'distraction')
+          .forEach((e) => {
+            distractionCounts[e.category] =
+              (distractionCounts[e.category] || 0) + e.durationMinutes;
+          });
+
+        const topDistraction =
+          Object.entries(distractionCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ||
+          'Ninguna';
+
+        return {
+          score,
+          focusTime,
+          lostTime,
+          topDistraction,
+          sessionCount: filtered.filter((e) => e.type === 'focus').length,
+        };
       },
     }),
     {
-      name: 'audit-storage',
+      name: 'audit-analytics-v2-storage',
       storage: createJSONStorage(() => AsyncStorage),
     }
   )

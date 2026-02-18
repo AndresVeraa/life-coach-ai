@@ -15,11 +15,12 @@ import {
 import { useScheduleStore, SCHEDULE_COLORS } from '../store/schedule.store';
 import type { ScheduleBlock } from '../store/schedule.store';
 import { useTasksStore, PRIORITY_CONFIG as TASK_PRIORITY, CATEGORY_CONFIG, timeToDecimal } from '../store/tasks.store';
+import { useHealthStore } from '../features/health/health.store';
 
 const DAYS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const FULL_DAYS = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
-const HOURS_START = 6;
-const HOURS_END = 22;
+const HOURS_START = 5;
+const HOURS_END = 23;
 const HOUR_HEIGHT = 64;
 
 const BLOCK_TYPES: { label: string; value: ScheduleBlock['type'] }[] = [
@@ -83,12 +84,26 @@ export default function Home() {
   ).current;
 
   const { blocks, addBlock, updateBlock, removeBlock, toggleCompleted } = useScheduleStore();
-  const { tasks: allTasks } = useTasksStore();
+  const { tasks: allTasks, toggleTask, checkDailyReset } = useTasksStore();
+  const { targetWakeTime, targetBedTime, getTodayLog } = useHealthStore();
   const scrollRef = useRef<ScrollView>(null);
+
+  // Circadian data for timeline markers
+  const wakeHour = useMemo(() => timeToDecimal(targetWakeTime), [targetWakeTime]);
+  const bedHour = useMemo(() => timeToDecimal(targetBedTime), [targetBedTime]);
+  const todayLog = getTodayLog();
+
+  // Resetear hábitos diarios al cambiar de día
+  useEffect(() => {
+    checkDailyReset();
+  }, []);
 
   // Actualizar reloj cada minuto
   useEffect(() => {
-    const interval = setInterval(() => setCurrentTime(new Date()), 60_000);
+    const interval = setInterval(() => {
+      setCurrentTime(new Date());
+      checkDailyReset();
+    }, 60_000);
     return () => clearInterval(interval);
   }, []);
 
@@ -112,8 +127,6 @@ export default function Home() {
     const items: (typeof allTasks[number] & { hour: number; isHabit?: boolean })[] = [];
 
     allTasks.forEach((t) => {
-      if (t.completed) return;
-
       // Tasks with scheduledTimestamp (one-off calendar placement)
       if (t.scheduledTimestamp) {
         const d = new Date(t.scheduledTimestamp);
@@ -143,9 +156,10 @@ export default function Home() {
 
   const hours = useMemo(() => {
     const arr: number[] = [];
-    for (let h = HOURS_START; h <= HOURS_END; h++) arr.push(h);
+    const endH = Math.max(HOURS_END, Math.floor(bedHour));
+    for (let h = HOURS_START; h <= endH; h++) arr.push(h);
     return arr;
-  }, []);
+  }, [bedHour]);
 
   const getGreeting = () => {
     const h = currentTime.getHours();
@@ -340,7 +354,7 @@ export default function Home() {
 
   // Posición de la línea de tiempo actual
   const nowLineTop = (currentHourDecimal - HOURS_START) * HOUR_HEIGHT;
-  const showNowLine = isToday && currentHourDecimal >= HOURS_START && currentHourDecimal <= HOURS_END;
+  const showNowLine = isToday && currentHourDecimal >= HOURS_START && currentHourDecimal < HOURS_END + 1;
 
   // Filtrar opciones de fin según inicio
   const endTimeOptions = TIME_OPTIONS.filter((t) => t.value > formStartHour);
@@ -405,6 +419,40 @@ export default function Home() {
           showsVerticalScrollIndicator={false}
         >
           <View style={{ position: 'relative' }}>
+          {/* Wake time marker */}
+          {Math.floor(wakeHour) >= HOURS_START && Math.floor(wakeHour) <= HOURS_END && (
+            <View
+              style={[styles.circadianLine, { top: (Math.floor(wakeHour) - HOURS_START) * HOUR_HEIGHT }]}
+              pointerEvents="none"
+            >
+              <View style={[styles.circadianPill, { backgroundColor: '#FFF7ED', borderColor: '#FDBA74' }]}>
+                <Text style={{ fontSize: 12 }}>☀️</Text>
+                <Text style={styles.circadianPillTextWake}>
+                  Despertar {targetWakeTime.replace(/^0/, '')}
+                  {todayLog?.wakeTime ? ` · ✅ ${todayLog.wakeTime.replace(/^0/, '')}` : ''}
+                </Text>
+              </View>
+              <View style={[styles.circadianBar, { backgroundColor: '#FDBA74' }]} />
+            </View>
+          )}
+
+          {/* Bed time marker */}
+          {Math.floor(bedHour) >= HOURS_START && (
+            <View
+              style={[styles.circadianLine, { top: (Math.floor(bedHour) - HOURS_START) * HOUR_HEIGHT }]}
+              pointerEvents="none"
+            >
+              <View style={[styles.circadianPill, { backgroundColor: '#EEF2FF', borderColor: '#A5B4FC' }]}>
+                <Text style={{ fontSize: 12 }}>🌙</Text>
+                <Text style={styles.circadianPillTextBed}>
+                  Dormir {targetBedTime.replace(/^0/, '')}
+                  {todayLog?.bedTime ? ` · ✅ ${todayLog.bedTime.replace(/^0/, '')}` : ''}
+                </Text>
+              </View>
+              <View style={[styles.circadianBar, { backgroundColor: '#A5B4FC' }]} />
+            </View>
+          )}
+
           {/* Línea roja del ahora */}
           {showNowLine && (
             <View style={[styles.nowLine, { top: nowLineTop }]} pointerEvents="none">
@@ -528,22 +576,39 @@ export default function Home() {
               const badgeBg = isHabit && cat ? cat.bg : taskPriConfig.bg;
               const badgeColor = isHabit && cat ? cat.color : taskPriConfig.color;
               const badgeIcon = isHabit ? '🌱' : taskPriConfig.icon;
+              const isDone = scheduledTask.completed;
               return (
                 <View key={hour} style={styles.scheduledTaskBlock}>
                   <Text style={styles.freeHourLabel}>{formatHour(hour)}</Text>
-                  <View style={[styles.scheduledTaskCard, { borderLeftColor: borderColor }]}>
+                  <View style={[
+                    styles.scheduledTaskCard,
+                    { borderLeftColor: isDone ? '#10B981' : borderColor },
+                    isDone && { backgroundColor: '#ECFDF5', opacity: 0.85 },
+                  ]}>
                     <Text style={{ fontSize: 16 }}>{icon}</Text>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.scheduledTaskTitle}>{scheduledTask.title}</Text>
+                      <Text style={[
+                        styles.scheduledTaskTitle,
+                        isDone && { textDecorationLine: 'line-through', color: '#9CA3AF' },
+                      ]}>
+                        {scheduledTask.title}
+                      </Text>
                       <Text style={styles.scheduledTaskSub}>
-                        {subtitle}
+                        {isDone ? '✔ Completado' : subtitle}
                       </Text>
                     </View>
-                    <View style={[styles.scheduledTaskPriBadge, { backgroundColor: badgeBg }]}>
-                      <Text style={{ fontSize: 10, fontWeight: '800', color: badgeColor }}>
-                        {badgeIcon}
+                    <TouchableOpacity
+                      onPress={() => toggleTask(scheduledTask.id)}
+                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      style={[
+                        styles.checkButton,
+                        isDone && styles.checkButtonDone,
+                      ]}
+                    >
+                      <Text style={styles.checkIcon}>
+                        {isDone ? '✅' : '⬜'}
                       </Text>
-                    </View>
+                    </TouchableOpacity>
                   </View>
                 </View>
               );
@@ -903,6 +968,42 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     zIndex: 10,
+  },
+
+  // Circadian markers (wake/bed)
+  circadianLine: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    flexDirection: 'row',
+    alignItems: 'center',
+    zIndex: 8,
+  },
+  circadianPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+    borderWidth: 1,
+    gap: 4,
+    marginLeft: 2,
+  },
+  circadianPillTextWake: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#C2410C',
+  },
+  circadianPillTextBed: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#4338CA',
+  },
+  circadianBar: {
+    flex: 1,
+    height: 1.5,
+    marginLeft: 4,
+    opacity: 0.5,
   },
   nowDot: {
     width: 10,
