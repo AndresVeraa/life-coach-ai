@@ -11,11 +11,19 @@ import {
   Keyboard,
   Dimensions,
   PanResponder,
+  useWindowDimensions,
+  StatusBar,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useScheduleStore, SCHEDULE_COLORS } from '../store/schedule.store';
 import type { ScheduleBlock, BlockNote } from '../store/schedule.store';
 import { useTasksStore, PRIORITY_CONFIG as TASK_PRIORITY, CATEGORY_CONFIG, timeToDecimal } from '../store/tasks.store';
 import { useHealthStore } from '../features/health/health.store';
+import { useClasesParaTimeline, ClaseTimeline, useUniversityStats, useProximaClase, ClaseHoy } from '../features/agenda/hooks/useClasesHoy';
+import { useUniversityStore, useDaysUntilNextEvaluation } from '../features/agenda/university.store';
+
+type NavigationProp = NativeStackNavigationProp<any>;
 
 const DAYS = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
 const FULL_DAYS = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
@@ -38,7 +46,16 @@ for (let h = HOURS_START; h <= HOURS_END; h++) {
   }
 }
 
+// Responsive helper
+const rs = (base: number, w: number) => {
+  const scale = Math.min(1, Math.max(0.85, w / 400));
+  return Math.round(base * scale);
+};
+
 export default function Home() {
+  const { width: W } = useWindowDimensions();
+  const isSmallScreen = W < 360;
+  
   const now = useRef(new Date());
   const [currentTime, setCurrentTime] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState(now.current.getDay());
@@ -91,6 +108,30 @@ export default function Home() {
   const { tasks: allTasks, toggleTask, checkDailyReset } = useTasksStore();
   const { targetWakeTime, targetBedTime, getTodayLog } = useHealthStore();
   const scrollRef = useRef<ScrollView>(null);
+
+  // Navegación
+  const navigation = useNavigation<NavigationProp>();
+  
+  // Universidad - Clases y estadísticas
+  const clasesDelDia = useClasesParaTimeline(selectedDay);
+  const subjects = useUniversityStore(state => state.subjects);
+  const isUniversityInitialized = useUniversityStore(state => state.isInitialized);
+  const initializeAcademicCalendar2026 = useUniversityStore(state => state.initializeAcademicCalendar2026);
+  // Separar clases de bloques de estudio
+  const clasesClases = clasesDelDia.filter(c => c.type === 'clase');
+  const bloquesEstudio = clasesDelDia.filter(c => c.type === 'estudio' || c.type === 'repaso');
+  const totalClasesHoy = clasesClases.length;
+  const totalEstudioHoy = bloquesEstudio.length;
+  const universityStats = useUniversityStats();
+  const proximaClase = useProximaClase();
+  const daysUntilExam = useDaysUntilNextEvaluation();
+
+  // Inicializar calendario académico si es necesario
+  useEffect(() => {
+    if (!isUniversityInitialized) {
+      initializeAcademicCalendar2026();
+    }
+  }, [isUniversityInitialized, initializeAcademicCalendar2026]);
 
   // Circadian data for timeline markers
   const wakeHour = useMemo(() => timeToDecimal(targetWakeTime), [targetWakeTime]);
@@ -273,6 +314,17 @@ export default function Home() {
     return dayBlocks.some((b) => Math.floor(b.startHour) === hour);
   };
 
+  // CAMBIO 1: Funciones para detectar clases de universidad en el timeline
+  const getClaseAtHour = (hour: number): ClaseTimeline | undefined => {
+    return clasesDelDia.find(
+      (c) => hour >= c.hour && hour < c.endHour
+    );
+  };
+
+  const isClaseStart = (hour: number): boolean => {
+    return clasesDelDia.some((c) => Math.floor(c.hour) === hour);
+  };
+
   // Abrir modal para AGREGAR
   const openAddModal = (hour: number) => {
     setEditingBlock(null);
@@ -365,31 +417,87 @@ export default function Home() {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
+      {/* Header Unificado - Universidad + Agenda */}
+      <View style={[styles.header, { paddingHorizontal: rs(16, W) }]}>
         <View style={styles.headerTopRow}>
-          <View>
-            <Text style={styles.greeting}>{getGreeting()} {weather.icon} {weather.temp}</Text>
-            <Text style={styles.headerTitle}>📅 Mi Agenda</Text>
+          <View style={{ flex: 1, marginRight: 8 }}>
+            <Text style={[styles.greeting, { fontSize: rs(12, W) }]} numberOfLines={1}>
+              {getGreeting()} {weather.icon} {weather.temp}
+            </Text>
+            <Text style={[styles.headerTitle, { fontSize: rs(isSmallScreen ? 20 : 24, W) }]} numberOfLines={1}>
+              Mi Día
+            </Text>
           </View>
-          <View style={styles.clockBadge}>
-            <Text style={styles.clockText}>{formatCurrentTime()}</Text>
+          <View style={styles.headerRight}>
+            <View style={[styles.clockBadge, isSmallScreen && styles.clockBadgeSmall]}>
+              <Text style={[styles.clockText, { fontSize: rs(isSmallScreen ? 16 : 20, W) }]}>{formatCurrentTime()}</Text>
+            </View>
           </View>
         </View>
-        <Text style={styles.headerDate}>
-          {currentTime.toLocaleDateString('es-ES', {
-            weekday: 'long',
-            day: 'numeric',
-            month: 'long',
-          })}
-        </Text>
+        
+        {/* Quick Stats Row */}
+        <View style={styles.quickStatsRow}>
+          <Text style={[styles.headerDate, { fontSize: rs(12, W), flex: 1 }]} numberOfLines={1}>
+            {currentTime.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'short' })}
+          </Text>
+          {subjects.length > 0 && (
+            <View style={styles.quickStatsBadges}>
+              {totalClasesHoy > 0 && (
+                <View style={styles.statBadge}>
+                  <Text style={styles.statBadgeText}>🎓 {totalClasesHoy}</Text>
+                </View>
+              )}
+              {totalEstudioHoy > 0 && (
+                <View style={[styles.statBadge, { backgroundColor: '#EEF2FF' }]}>
+                  <Text style={styles.statBadgeText}>📖 {totalEstudioHoy}</Text>
+                </View>
+              )}
+              <View style={[styles.statBadge, styles.statBadgeSecondary]}>
+                <Text style={styles.statBadgeText}>📋 {scheduledTasksForDay.length}</Text>
+              </View>
+            </View>
+          )}
+        </View>
+
+        {/* Alerta de exámenes próximos */}
+        {daysUntilExam > 0 && daysUntilExam <= 14 && (
+          <TouchableOpacity 
+            onPress={() => navigation.navigate('UniversitySchedule')}
+            style={[
+              styles.examAlertBanner, 
+              { 
+                backgroundColor: daysUntilExam <= 7 ? '#1a0a0a' : '#1a150a',
+                borderColor: daysUntilExam <= 7 ? '#DC2626' : '#CA8A04',
+              }
+            ]}
+          >
+            <Text style={styles.examAlertIcon}>{daysUntilExam <= 7 ? '🚨' : '⚠️'}</Text>
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.examAlertTitle, { color: daysUntilExam <= 7 ? '#FCA5A5' : '#FDE68A' }]}>
+                {daysUntilExam <= 7 ? '¡Exámenes esta semana!' : 'Exámenes próximos'}
+              </Text>
+              <Text style={[styles.examAlertSubtitle, { color: daysUntilExam <= 7 ? '#F87171' : '#FBBF24' }]}>
+                En {daysUntilExam} día{daysUntilExam > 1 ? 's' : ''} · Toca para ver detalles
+              </Text>
+            </View>
+            <Text style={styles.examAlertArrow}>→</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
-      {/* Selector de días */}
+      {/* Selector de días con indicador de clases */}
       <View style={styles.daySelector}>
         {DAYS.map((day, idx) => {
           const isSelected = idx === selectedDay;
           const isDayToday = idx === now.current.getDay();
+          // Contar clases de este día
+          const dayNames = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
+          const clasesEnDia = subjects.reduce((count, s) => {
+            return count + s.classSessions.filter(cs => 
+              cs.day.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '') === dayNames[idx]
+            ).length;
+          }, 0);
+          
           return (
             <TouchableOpacity
               key={day}
@@ -402,18 +510,112 @@ export default function Home() {
               <Text
                 style={[
                   styles.dayText,
+                  { fontSize: rs(isSmallScreen ? 10 : 12, W) },
                   isSelected && styles.dayTextSelected,
                 ]}
               >
                 {day}
               </Text>
-              {isDayToday && <View style={styles.todayDot} />}
+              <View style={styles.dayIndicators}>
+                {isDayToday && <View style={styles.todayDot} />}
+                {clasesEnDia > 0 && !isSelected && (
+                  <View style={styles.claseDot} />
+                )}
+              </View>
             </TouchableOpacity>
           );
         })}
       </View>
 
-      <Text style={styles.dayFullName}>{FULL_DAYS[selectedDay]}</Text>
+      {/* Día seleccionado + resumen */}
+      <View style={[styles.dayHeaderRow, { paddingHorizontal: rs(16, W) }]}>
+        <Text style={[styles.dayFullName, { fontSize: rs(14, W) }]}>{FULL_DAYS[selectedDay]}</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          {totalClasesHoy > 0 && (
+            <Text style={styles.dayClasesSummary}>
+              🎓 {totalClasesHoy}
+            </Text>
+          )}
+          {totalEstudioHoy > 0 && (
+            <Text style={[styles.dayClasesSummary, { color: '#6366F1' }]}>
+              📖 {totalEstudioHoy}
+            </Text>
+          )}
+          {/* Botón para ir a Universidad */}
+          <TouchableOpacity 
+            onPress={() => navigation.navigate('UniversitySchedule')}
+            style={styles.goToUniversityBtn}
+          >
+            <Text style={styles.goToUniversityText}>Ver horario →</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+
+      {/* Banner de Clase Activa o Próxima (solo para hoy) */}
+      {isToday && proximaClase && (
+        <TouchableOpacity 
+          onPress={() => navigation.navigate('UniversitySchedule')}
+          style={[
+            styles.claseActivaBanner,
+            { 
+              backgroundColor: proximaClase.color + '18',
+              borderLeftColor: proximaClase.color,
+            }
+          ]}
+        >
+          <View style={[styles.claseActivaIconWrap, { backgroundColor: proximaClase.color + '25' }]}>
+            <Text style={styles.claseActivaIcon}>
+              {proximaClase.isActive ? '📚' : proximaClase.type === 'estudio' ? '📖' : '🎓'}
+            </Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            {proximaClase.isActive ? (
+              <>
+                <View style={styles.claseActivaLiveRow}>
+                  <View style={[styles.liveDot, { backgroundColor: proximaClase.color }]} />
+                  <Text style={[styles.claseActivaLabel, { color: proximaClase.color }]}>EN CURSO</Text>
+                </View>
+                <Text style={[styles.claseActivaTitle, { color: proximaClase.color }]} numberOfLines={1}>
+                  {proximaClase.subjectName}
+                </Text>
+                <Text style={styles.claseActivaDetail}>
+                  {proximaClase.subjectCode} · {proximaClase.startTime} - {proximaClase.endTime}
+                </Text>
+              </>
+            ) : (
+              <>
+                <Text style={styles.claseActivaNextLabel}>SIGUIENTE</Text>
+                <Text style={[styles.claseActivaTitle, { color: proximaClase.color }]} numberOfLines={1}>
+                  {proximaClase.subjectName}
+                </Text>
+                <Text style={styles.claseActivaDetail}>
+                  {proximaClase.type === 'clase' ? 'Clase' : 'Estudio'} · Inicia a las {proximaClase.startTime}
+                </Text>
+              </>
+            )}
+          </View>
+          {proximaClase.location && (
+            <Text style={styles.claseActivaLocation}>📍 {proximaClase.location}</Text>
+          )}
+        </TouchableOpacity>
+      )}
+
+      {/* CTA para agregar materias (cuando no hay ninguna) */}
+      {subjects.length === 0 && (
+        <TouchableOpacity 
+          onPress={() => navigation.navigate('UniversitySchedule')}
+          style={styles.emptyUniversityCTA}
+        >
+          <Text style={styles.emptyUniversityIcon}>🎓</Text>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.emptyUniversityTitle}>Configura tu Universidad</Text>
+            <Text style={styles.emptyUniversitySubtitle}>
+              Agrega tus materias y horarios para verlos aquí
+            </Text>
+          </View>
+          <Text style={styles.emptyUniversityArrow}>→</Text>
+        </TouchableOpacity>
+      )}
 
       {/* Timeline */}
       <View style={{ flex: 1 }} {...panResponder.panHandlers}>
@@ -469,9 +671,16 @@ export default function Home() {
           {hours.map((hour) => {
             const block = getBlockAtHour(hour);
             const startsHere = isBlockStart(hour);
+            
+            // CAMBIO 1: Detectar clases de universidad
+            const clase = getClaseAtHour(hour);
+            const claseStartsHere = isClaseStart(hour);
 
             // Si el bloque cubre esta hora pero no empieza aquí, no pintar
             if (block && !startsHere) return null;
+            
+            // Si la clase cubre esta hora pero no empieza aquí, no pintar
+            if (clase && !claseStartsHere && !block) return null;
 
             if (block && startsHere) {
               const blockHeight = block.duration * HOUR_HEIGHT;
@@ -586,6 +795,82 @@ export default function Home() {
               );
             }
 
+            // ═══════════════════════════════════════════════════════════════
+            // CAMBIO 1: Renderizar CLASE o BLOQUE DE ESTUDIO integrado en timeline
+            // ═══════════════════════════════════════════════════════════════
+            if (clase && claseStartsHere) {
+              const claseHeight = (clase.endHour - clase.hour) * HOUR_HEIGHT;
+              const isPast = isToday && clase.endHour <= currentHourDecimal;
+              const isEstudio = clase.type === 'estudio' || clase.type === 'repaso';
+              const icon = clase.type === 'clase' ? '🎓' : clase.type === 'repaso' ? '🔄' : '📖';
+              const label = clase.type === 'clase' ? 'Clase' : clase.type === 'repaso' ? 'Repaso' : 'Estudio';
+              
+              return (
+                <View key={hour} style={{ position: 'relative' }}>
+                  <View
+                    style={[
+                      styles.claseUniversidadBlock,
+                      {
+                        height: Math.max(claseHeight, 60),
+                        backgroundColor: isEstudio ? clase.color + '20' : clase.color + '14',
+                        borderLeftColor: clase.color.replace(/80$/, ''), // Remove opacity suffix
+                        opacity: isPast ? 0.6 : clase.isCompleted ? 0.5 : 1,
+                        borderStyle: isEstudio ? 'dashed' : 'solid',
+                      },
+                    ]}
+                  >
+                    <View style={styles.blockRow}>
+                      <Text style={styles.blockHourLabel}>
+                        {formatHour(clase.hour)}
+                      </Text>
+                      <View style={styles.blockContent}>
+                        <Text style={styles.blockIcon}>{icon}</Text>
+                        <View style={{ flex: 1 }}>
+                          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                            <Text
+                              style={[styles.claseTitle, { color: clase.color.replace(/80$/, '') }]}
+                              numberOfLines={1}
+                              ellipsizeMode="tail"
+                            >
+                              {clase.title}
+                            </Text>
+                            {clase.isAISuggested && <Text style={{ fontSize: 10 }}>✨</Text>}
+                            {clase.isCompleted && <Text style={{ fontSize: 10 }}>✓</Text>}
+                          </View>
+                          <Text style={styles.claseSubtitle} numberOfLines={1}>
+                            {label} · {clase.code} · ⏰ {clase.startTime}
+                          </Text>
+                        </View>
+                      </View>
+                    </View>
+
+                    <View style={styles.blockFooter}>
+                      <View style={[styles.claseTypeBadge, { backgroundColor: clase.color.replace(/80$/, '') + '20' }]}>
+                        <Text style={[styles.claseTypeBadgeText, { color: clase.color.replace(/80$/, '') }]}>
+                          {isEstudio ? label : clase.subjectType}
+                        </Text>
+                      </View>
+                      <Text style={styles.claseTimeRange}>
+                        {clase.startTime} → {clase.endTime}
+                      </Text>
+                    </View>
+                    
+                    {clase.professor && !isEstudio && (
+                      <Text style={styles.claseProfessor} numberOfLines={1}>
+                        👤 {clase.professor}
+                      </Text>
+                    )}
+                    
+                    {clase.location && !isEstudio && (
+                      <Text style={styles.claseLocation} numberOfLines={1}>
+                        📍 {clase.location}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+              );
+            }
+
             // Hora libre - ¿hay sugerencia de prep?
             const prep = prepSuggestions.find((s) => s.hour === hour);
             if (prep) {
@@ -600,7 +885,9 @@ export default function Home() {
                   <View style={[styles.prepCard, { borderColor: prep.classColor }]}>
                     <Text style={styles.prepIcon}>📖</Text>
                     <View style={{ flex: 1 }}>
-                      <Text style={styles.prepTitle}>Preparar {prep.className}</Text>
+                      <Text style={styles.prepTitle} numberOfLines={1} ellipsizeMode="tail">
+                        Preparar {prep.className}
+                      </Text>
                       <Text style={styles.prepSubtitle}>⚡ Repaso rápido antes de clase</Text>
                     </View>
                     <Text style={styles.prepAdd}>+</Text>
@@ -637,10 +924,10 @@ export default function Home() {
                       <Text style={[
                         styles.scheduledTaskTitle,
                         isDone && { textDecorationLine: 'line-through', color: '#9CA3AF' },
-                      ]}>
+                      ]} numberOfLines={1} ellipsizeMode="tail">
                         {scheduledTask.title}
                       </Text>
-                      <Text style={styles.scheduledTaskSub}>
+                      <Text style={styles.scheduledTaskSub} numberOfLines={1}>
                         {isDone ? '✔ Completado' : subtitle}
                       </Text>
                     </View>
@@ -1013,6 +1300,11 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     marginTop: 4,
   },
+  // CAMBIO 3: Estilo para pantallas pequeñas
+  clockBadgeSmall: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
   clockText: {
     fontSize: 22,
     fontWeight: 'bold',
@@ -1022,8 +1314,34 @@ const styles = StyleSheet.create({
   headerDate: {
     fontSize: 13,
     color: '#e0e7ff',
-    marginTop: 4,
     textTransform: 'capitalize',
+  },
+  // Header unificado - nuevos estilos
+  headerRight: {
+    alignItems: 'flex-end',
+  },
+  quickStatsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  quickStatsBadges: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  statBadge: {
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  statBadgeSecondary: {
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  statBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: '#ffffff',
   },
   nextClassCard: {
     backgroundColor: '#eef2ff',
@@ -1059,19 +1377,19 @@ const styles = StyleSheet.create({
   },
   daySelector: {
     flexDirection: 'row',
-    justifyContent: 'space-around',
-    paddingHorizontal: 12,
-    paddingVertical: 12,
+    paddingHorizontal: 6,
+    paddingVertical: 10,
     backgroundColor: '#ffffff',
     borderBottomWidth: 1,
     borderBottomColor: '#e5e7eb',
-    marginTop: 8,
   },
+  // CAMBIO 3: flex: 1 para distribución uniforme
   dayButton: {
+    flex: 1,
     alignItems: 'center',
     paddingVertical: 8,
-    paddingHorizontal: 10,
-    borderRadius: 12,
+    marginHorizontal: 2,
+    borderRadius: 10,
   },
   dayButtonSelected: {
     backgroundColor: '#4F46E5',
@@ -1089,15 +1407,43 @@ const styles = StyleSheet.create({
     height: 5,
     borderRadius: 3,
     backgroundColor: '#f59e0b',
+  },
+  // Indicadores de día (hoy + clases)
+  dayIndicators: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     marginTop: 3,
+    gap: 3,
+    height: 6,
+  },
+  claseDot: {
+    width: 5,
+    height: 5,
+    borderRadius: 3,
+    backgroundColor: '#4F46E5',
+  },
+  // Header row con día + resumen
+  dayHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingTop: 10,
+    paddingBottom: 6,
+  },
+  dayClasesSummary: {
+    fontSize: 12,
+    color: '#4F46E5',
+    fontWeight: '600',
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
   },
   dayFullName: {
     fontSize: 15,
     fontWeight: '600',
     color: '#374151',
-    paddingHorizontal: 20,
-    paddingTop: 12,
-    paddingBottom: 4,
     textTransform: 'capitalize',
   },
   timeline: {
@@ -1589,6 +1935,7 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 1 },
     shadowOpacity: 0.08,
     shadowRadius: 3,
+    minHeight: 56, // CAMBIO 3: minHeight para evitar compresión
   },
   scheduledTaskTitle: {
     fontSize: 14,
@@ -1770,5 +2117,194 @@ const styles = StyleSheet.create({
     color: '#9ca3af',
     fontSize: 13,
     paddingVertical: 20,
+  },
+
+  // ═══════════════════════════════════════════════════════════════
+  // CAMBIO 1: Estilos para CLASE DE UNIVERSIDAD en timeline
+  // ═══════════════════════════════════════════════════════════════
+  claseUniversidadBlock: {
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    marginBottom: 2,
+    justifyContent: 'space-between',
+    borderLeftWidth: 4,
+    minHeight: 60,
+  },
+  claseTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  claseSubtitle: {
+    fontSize: 11,
+    color: '#6b7280',
+    marginTop: 1,
+  },
+  claseTypeBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+  },
+  claseTypeBadgeText: {
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'capitalize',
+  },
+  claseTimeRange: {
+    fontSize: 11,
+    color: '#6b7280',
+  },
+  claseProfessor: {
+    fontSize: 11,
+    color: '#6b7280',
+    marginTop: 4,
+    paddingLeft: 50,
+  },
+  claseLocation: {
+    fontSize: 11,
+    color: '#6b7280',
+    marginTop: 2,
+    paddingLeft: 50,
+  },
+
+  // ═══════════════════════════════════════════════════════════════
+  // Estilos para funcionalidades de Universidad integradas
+  // ═══════════════════════════════════════════════════════════════
+  
+  // Alerta de exámenes próximos
+  examAlertBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginTop: 10,
+    borderWidth: 1,
+    gap: 10,
+  },
+  examAlertIcon: {
+    fontSize: 24,
+  },
+  examAlertTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  examAlertSubtitle: {
+    fontSize: 12,
+    marginTop: 2,
+  },
+  examAlertArrow: {
+    fontSize: 18,
+    color: '#6b7280',
+  },
+
+  // Banner de clase activa/próxima
+  claseActivaBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderLeftWidth: 4,
+    gap: 12,
+  },
+  claseActivaIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  claseActivaIcon: {
+    fontSize: 22,
+  },
+  claseActivaLiveRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 2,
+  },
+  liveDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#10B981',
+  },
+  claseActivaLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  claseActivaNextLabel: {
+    fontSize: 10,
+    fontWeight: '700',
+    color: '#7C6FCD',
+    letterSpacing: 0.5,
+    marginBottom: 2,
+  },
+  claseActivaTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  claseActivaDetail: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 2,
+  },
+  claseActivaLocation: {
+    fontSize: 11,
+    color: '#6b7280',
+    backgroundColor: 'rgba(255,255,255,0.6)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+
+  // Botón ir a Universidad
+  goToUniversityBtn: {
+    backgroundColor: '#7C6FCD20',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+  },
+  goToUniversityText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: '#7C6FCD',
+  },
+
+  // CTA estado vacío de universidad
+  emptyUniversityCTA: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#7C6FCD10',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    marginHorizontal: 16,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#7C6FCD30',
+    borderStyle: 'dashed',
+    gap: 12,
+  },
+  emptyUniversityIcon: {
+    fontSize: 28,
+  },
+  emptyUniversityTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#7C6FCD',
+  },
+  emptyUniversitySubtitle: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 2,
+  },
+  emptyUniversityArrow: {
+    fontSize: 18,
+    color: '#7C6FCD',
   },
 });

@@ -17,6 +17,7 @@ import Tasks from '../screens/tasks';
 import Health from '../screens/health';
 import Coach from '../screens/coach';
 import Audit from '../screens/audit';
+import { UniversityScheduleScreen } from '../features/agenda/screens/UniversityScheduleScreen';
 
 const Stack = createNativeStackNavigator();
 const Tab = createBottomTabNavigator();
@@ -234,6 +235,22 @@ export default function AppNavigator() {
     <NavigationContainer>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         <Stack.Screen name="Root" component={TabNavigator} />
+        <Stack.Screen 
+          name="UniversitySchedule" 
+          component={UniversityScheduleScreen}
+          options={{
+            headerShown: true,
+            headerTitle: 'Universidad',
+            headerBackTitle: 'Atrás',
+            headerTintColor: '#4F46E5',
+            headerStyle: {
+              backgroundColor: '#FFFFFF',
+            },
+            headerTitleStyle: {
+              fontWeight: '600',
+            },
+          }}
+        />
       </Stack.Navigator>
     </NavigationContainer>
   );
