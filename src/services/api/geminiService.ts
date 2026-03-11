@@ -1,8 +1,21 @@
 import axios from 'axios';
+import { getConfig } from '@/constants/config';
 
-const getApiKey = () => process.env.EXPO_PUBLIC_GEMINI_API_KEY;
-const getGeminiUrl = () =>
-  `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${getApiKey()}`;
+/**
+ * Obtener API key de forma segura
+ */
+const getApiKey = (): string => {
+  const config = getConfig();
+  return config.env.GEMINI_API_KEY;
+};
+
+/**
+ * Construir URL de Gemini API
+ */
+const getGeminiUrl = (): string => {
+  const apiKey = getApiKey();
+  return `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+};
 
 // --- Tool Call types ---
 export interface ToolCall {
@@ -124,9 +137,12 @@ export const sendMessageToGemini = async (
     };
   } catch (error: any) {
     // Log detallado del error para debugging
-    console.error('❌ Gemini Error:', error.message);
-    if (error.response?.data) {
-      console.error('❌ Gemini Response Body:', JSON.stringify(error.response.data, null, 2));
+    const config = getConfig();
+    if (config.env.DEBUG_MODE) {
+      console.error('❌ Gemini Error:', error.message);
+      if (error.response?.data) {
+        console.error('❌ Gemini Response Body:', JSON.stringify(error.response.data, null, 2));
+      }
     }
 
     let errorMsg = 'Lo siento, tuve un problema de conexión.';

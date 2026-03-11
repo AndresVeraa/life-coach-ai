@@ -1,7 +1,12 @@
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { isSameDay } from 'date-fns';
+import { isSameDay, addDays, setHours, setMinutes, startOfDay } from 'date-fns';
+import {
+  scheduleTaskReminder,
+  cancelTaskReminder,
+} from '@/services/notifications/notificationService';
+import { getConfig } from '@/constants/config';
 
 // --- Types ---
 export type Priority = 'urgent' | 'medium' | 'normal';
@@ -127,50 +132,96 @@ export const useTasksStore = create<TasksState>()(
     (set, get) => ({
       tasks: [],
 
-      addTask: (taskData) =>
-        set((state) => ({
-          tasks: [
-            {
-              id: Date.now().toString(),
-              title: taskData.title,
-              completed: false,
-              priority: taskData.priority ?? 'normal',
-              tag: taskData.tag ?? 'personal',
-              category: taskData.category ?? 'carrera',
-              frequency: taskData.frequency ?? 'once',
-              repeatDays: taskData.repeatDays,
-              scheduledTimestamp: taskData.scheduledTimestamp,
-              reminderTime: taskData.reminderTime,
-              createdAt: Date.now(),
-            },
-            ...state.tasks,
-          ],
-        })),
+      addTask: (taskData) => {
+        const config = getConfig();
+        const newTask: Task = {
+          id: Date.now().toString(),
+          title: taskData.title,
+          completed: false,
+          priority: taskData.priority ?? 'normal',
+          tag: taskData.tag ?? 'personal',
+          category: taskData.category ?? 'carrera',
+          frequency: taskData.frequency ?? 'once',
+          repeatDays: taskData.repeatDays,
+          scheduledTimestamp: taskData.scheduledTimestamp,
+          reminderTime: taskData.reminderTime,
+          createdAt: Date.now(),
+        };
 
-      updateTask: (id, data) =>
+        // Programar notificación si tiene reminderTime
+        if (newTask.reminderTime) {
+          scheduleReminderForTask(newTask).catch((err) => {
+            if (config.env.DEBUG_MODE) {
+              console.warn('[Tasks] Error programando notificación:', err);
+            }
+          });
+        }
+
+        set((state) => ({
+          tasks: [newTask, ...state.tasks],
+        }));
+      },
+
+      updateTask: (id, data) => {
+        const config = getConfig();
+        const task = get().tasks.find((t) => t.id === id);
+        
         set((state) => ({
           tasks: state.tasks.map((t) =>
             t.id === id ? { ...t, ...data } : t
           ),
-        })),
+        }));
 
-      toggleTask: (id) =>
+        // Si se actualizó reminderTime, reprogramar notificación
+        if (task && data.reminderTime !== undefined) {
+          const updatedTask = { ...task, ...data };
+          
+          // Cancelar notificación anterior
+          cancelTaskReminder(id).catch(() => {});
+          
+          // Si tiene nuevo reminderTime, programar
+          if (data.reminderTime) {
+            scheduleReminderForTask(updatedTask as Task).catch((err) => {
+              if (config.env.DEBUG_MODE) {
+                console.warn('[Tasks] Error reprogramando notificación:', err);
+              }
+            });
+          }
+        }
+      },
+
+      toggleTask: (id) => {
+        const task = get().tasks.find((t) => t.id === id);
+        const newCompleted = task ? !task.completed : false;
+        
         set((state) => ({
           tasks: state.tasks.map((t) => {
             if (t.id !== id) return t;
-            const newCompleted = !t.completed;
             return {
               ...t,
               completed: newCompleted,
               lastCompletedDate: newCompleted ? Date.now() : undefined,
             };
           }),
-        })),
+        }));
 
-      removeTask: (id) =>
+        // Si se completó, cancelar notificación
+        if (newCompleted) {
+          cancelTaskReminder(id).catch(() => {});
+        } else if (task?.reminderTime) {
+          // Si se desmarcó, reprogramar si tiene reminderTime
+          scheduleReminderForTask(task).catch(() => {});
+        }
+      },
+
+      removeTask: (id) => {
+        // Cancelar notificación al eliminar
+        cancelTaskReminder(id).catch(() => {});
+        
         set((state) => ({
           tasks: state.tasks.filter((t) => t.id !== id),
-        })),
+        }));
+      },
 
       scheduleTask: (id, timestamp) =>
         set((state) => ({
@@ -186,16 +237,27 @@ export const useTasksStore = create<TasksState>()(
           ),
         })),
 
-      clearCompleted: () =>
+      clearCompleted: () => {
+        // Cancelar notificaciones de tareas completadas
+        const completedTasks = get().tasks.filter((t) => t.completed);
+        completedTasks.forEach((task) => {
+          cancelTaskReminder(task.id).catch(() => {});
+        });
+        
         set((state) => ({
           tasks: state.tasks.filter((t) => !t.completed),
-        })),
+        }));
+      },
 
       checkDailyReset: () =>
         set((state) => ({
           tasks: state.tasks.map((t) => {
             if (t.frequency !== 'once' && t.completed && t.lastCompletedDate) {
               if (!isSameDay(new Date(t.lastCompletedDate), new Date())) {
+                // Reprogramar notificación si tiene reminderTime
+                if (t.reminderTime) {
+                  scheduleReminderForTask(t).catch(() => {});
+                }
                 return { ...t, completed: false };
               }
             }
@@ -227,3 +289,39 @@ export const useTasksStore = create<TasksState>()(
     }
   )
 );
+
+// ============================================
+// HELPER: Programar recordatorio para una tarea
+// ============================================
+
+async function scheduleReminderForTask(task: Task): Promise<void> {
+  if (!task.reminderTime) return;
+  
+  const [hours, minutes] = task.reminderTime.split(':').map(Number);
+  let triggerDate: Date;
+  
+  if (task.frequency === 'once' && task.scheduledTimestamp) {
+    // Para tareas únicas, usar la fecha programada
+    triggerDate = new Date(task.scheduledTimestamp);
+    triggerDate = setHours(triggerDate, hours);
+    triggerDate = setMinutes(triggerDate, minutes);
+  } else {
+    // Para hábitos diarios/custom, programar para hoy o mañana
+    const now = new Date();
+    triggerDate = setHours(startOfDay(now), hours);
+    triggerDate = setMinutes(triggerDate, minutes);
+    
+    // Si ya pasó la hora hoy, programar para mañana
+    if (triggerDate <= now) {
+      triggerDate = addDays(triggerDate, 1);
+    }
+  }
+  
+  // Solo programar si la fecha es futura
+  if (triggerDate > new Date()) {
+    const categoryConfig = CATEGORY_CONFIG[task.category];
+    const body = `${categoryConfig?.icon || '📋'} ${task.title}`;
+    
+    await scheduleTaskReminder(task.id, task.title, body, triggerDate);
+  }
+}

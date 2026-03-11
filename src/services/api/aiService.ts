@@ -1,4 +1,4 @@
-import { ENV } from '@/constants/config';
+import { getConfig } from '@/constants/config';
 
 export interface AIMessage {
   role: 'user' | 'assistant';
@@ -14,11 +14,24 @@ export interface AIResponse {
 
 /**
  * Servicio de IA - Soporta OpenAI o Gemini
- * Usa la variable ENV para detectar qué API está configurada
+ * Usa getConfig() para obtener configuración de forma segura
  */
 
+/**
+ * Obtener API keys de forma segura
+ */
+const getApiKeys = () => {
+  const config = getConfig();
+  return {
+    openai: config.env.OPENAI_API_KEY,
+    gemini: config.env.GEMINI_API_KEY,
+  };
+};
+
 async function callOpenAI(messages: AIMessage[]): Promise<AIResponse> {
-  if (!ENV.OPENAI_API_KEY) {
+  const { openai: apiKey } = getApiKeys();
+
+  if (!apiKey) {
     return {
       success: false,
       error: 'OpenAI API key no configurada',
@@ -30,7 +43,7 @@ async function callOpenAI(messages: AIMessage[]): Promise<AIResponse> {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${ENV.OPENAI_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model: 'gpt-4o-mini',
@@ -75,7 +88,9 @@ async function callOpenAI(messages: AIMessage[]): Promise<AIResponse> {
 }
 
 async function callGemini(messages: AIMessage[]): Promise<AIResponse> {
-  if (!ENV.GEMINI_API_KEY) {
+  const { gemini: apiKey } = getApiKeys();
+
+  if (!apiKey) {
     return {
       success: false,
       error: 'Gemini API key no configurada',
@@ -90,7 +105,7 @@ async function callGemini(messages: AIMessage[]): Promise<AIResponse> {
     }));
 
     const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${ENV.GEMINI_API_KEY}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
       {
         method: 'POST',
         headers: {
@@ -145,11 +160,14 @@ export async function callAI(
   messages: AIMessage[],
   retries: number = 3
 ): Promise<AIResponse> {
-  // Detectar qué API usar basado en keys configuradas
-  const useGemini = ENV.GEMINI_API_KEY && !ENV.OPENAI_API_KEY;
-  const useOpenAI = ENV.OPENAI_API_KEY && !ENV.GEMINI_API_KEY;
+  const { openai, gemini } = getApiKeys();
+  const config = getConfig();
 
-  if (!useOpenAI && !useGemini) {
+  // Detectar qué API usar basado en keys configuradas
+  const useGemini = gemini && !openai;
+  const useOpenAI = openai && !gemini;
+
+  if (!useOpenAI && !useGemini && !openai && !gemini) {
     return {
       success: false,
       error: 'No AI API key configured. Set EXPO_PUBLIC_OPENAI_API_KEY or EXPO_PUBLIC_GEMINI_API_KEY in .env',
@@ -159,6 +177,7 @@ export async function callAI(
   let lastError: AIResponse | null = null;
 
   for (let i = 0; i < retries; i++) {
+    // Si tiene ambas keys, prioriza OpenAI
     const result = useGemini ? await callGemini(messages) : await callOpenAI(messages);
 
     if (result.success) {
@@ -167,9 +186,9 @@ export async function callAI(
 
     lastError = result;
 
-    // Exponential backoff: 2s, 4s, 8s
+    // Exponential backoff usando config
     if (i < retries - 1) {
-      const delayMs = Math.pow(2, i + 1) * 1000;
+      const delayMs = Math.pow(config.limits.BACKOFF_MULTIPLIER, i + 1) * 1000;
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
