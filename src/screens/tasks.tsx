@@ -18,8 +18,8 @@ import {
   FREQUENCY_CONFIG,
   DAYS_LABELS,
   TIME_SLOTS,
-} from '../store/tasks.store';
-import type { Category, Frequency, Task } from '../store/tasks.store';
+} from '@/features/tasks/tasks.store';
+import type { Category, Frequency, Task } from '@/features/tasks/tasks.store';
 
 type FilterMode = 'all' | 'today' | 'done';
 

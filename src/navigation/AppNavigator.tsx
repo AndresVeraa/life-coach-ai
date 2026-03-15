@@ -11,12 +11,13 @@ import {
   useWindowDimensions,
   Platform,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 
 import Home from '../screens/index';
 import Tasks from '../screens/tasks';
 import Health from '../screens/health';
 import Coach from '../screens/coach';
-import Audit from '../screens/audit';
+import { AnalyticsScreen } from '../features/analytics/screens/AnalyticsScreen';
 import { UniversityScheduleScreen } from '../features/agenda/screens/UniversityScheduleScreen';
 
 const Stack = createNativeStackNavigator();
@@ -24,11 +25,11 @@ const Tab = createBottomTabNavigator();
 
 // ── Tab items config ──
 const TAB_ITEMS = [
-  { key: 'Home', label: 'Agenda', icon: '📅', activeColor: '#4F46E5' },
-  { key: 'Tasks', label: 'Mi Plan', icon: '🌱', activeColor: '#059669' },
-  { key: 'Health', label: 'Salud', icon: '🏥', activeColor: '#dc2626' },
-  { key: 'Coach', label: 'Coach', icon: '🤖', activeColor: '#7c3aed' },
-  { key: 'Audit', label: 'Analítica', icon: '📊', activeColor: '#0891b2' },
+  { key: 'AgendaTab', label: 'Agenda', icon: 'calendar-outline', activeColor: '#4F46E5' },
+  { key: 'TasksTab', label: 'Mi Plan', icon: 'leaf-outline', activeColor: '#059669' },
+  { key: 'HealthTab', label: 'Salud', icon: 'heart-outline', activeColor: '#dc2626' },
+  { key: 'CoachTab', label: 'Coach', icon: 'chatbubble-ellipses-outline', activeColor: '#7c3aed' },
+  { key: 'AnalyticsTab', label: 'Analítica', icon: 'bar-chart-outline', activeColor: '#0891b2' },
 ];
 
 // ── Responsive scaler ──
@@ -112,11 +113,14 @@ function CarouselTabItem({
         />
         <Animated.Text
           style={{
-            fontSize: focused ? rs(24, screenWidth) : rs(20, screenWidth),
             transform: [{ scale: iconScale }],
           }}
         >
-          {item.icon}
+          <Ionicons
+            name={item.icon as React.ComponentProps<typeof Ionicons>['name']}
+            size={focused ? rs(24, screenWidth) : rs(20, screenWidth)}
+            color={focused ? item.activeColor : '#9ca3af'}
+          />
         </Animated.Text>
       </View>
 
@@ -221,11 +225,11 @@ function TabNavigator() {
       tabBar={(props) => <CarouselTabBar {...props} />}
       screenOptions={{ headerShown: false }}
     >
-      <Tab.Screen name="Home" component={Home} />
-      <Tab.Screen name="Tasks" component={Tasks} />
-      <Tab.Screen name="Health" component={Health} />
-      <Tab.Screen name="Coach" component={Coach} />
-      <Tab.Screen name="Audit" component={Audit} />
+      <Tab.Screen name="AgendaTab" component={Home} />
+      <Tab.Screen name="TasksTab" component={Tasks} />
+      <Tab.Screen name="HealthTab" component={Health} />
+      <Tab.Screen name="CoachTab" component={Coach} />
+      <Tab.Screen name="AnalyticsTab" component={AnalyticsScreen} />
     </Tab.Navigator>
   );
 }

@@ -1,17 +1,15 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, AppState, AppStateStatus } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import AppNavigator from './src/navigation/AppNavigator';
+import { RootNavigator } from './src/navigation/RootNavigator';
 import { validateAppConfig, getConfig, isEASBuild } from './src/utils/configValidator';
 import {
   requestPermissions,
   scheduleDailyCoachTip,
   setupNotificationListeners,
-  cleanupNotificationListeners,
 } from './src/services/notifications/notificationService';
 import { registerBackgroundSync } from './src/services/background/backgroundSync';
 import { syncManager } from './src/services/sync/syncManager';
-import { useAuthStore } from './src/features/auth/auth.store';
 
 export default function App() {
   const [configStatus, setConfigStatus] = useState<{
@@ -26,9 +24,6 @@ export default function App() {
 
   const appState = useRef(AppState.currentState);
   const cleanupListenersRef = useRef<(() => void) | null>(null);
-
-  // Inicializar auth store
-  const initializeAuth = useAuthStore((state) => state.initialize);
 
   useEffect(() => {
     // Validar configuración al startup
@@ -78,17 +73,9 @@ export default function App() {
 
   const initializeApp = async () => {
     const config = getConfig();
-    const inEASBuild = isEASBuild();
 
     try {
-      // 1. Inicializar auth
-      await initializeAuth();
-      
-      if (config.env.DEBUG_MODE) {
-        console.log('[App] Auth inicializado');
-      }
-
-      // 2. Inicializar sync manager (solo si hay credenciales de Supabase)
+      // 1. Inicializar sync manager (solo si hay credenciales de Supabase)
       if (config.env.SUPABASE_URL && config.env.SUPABASE_ANON_KEY) {
         syncManager.initialize();
         
@@ -99,11 +86,11 @@ export default function App() {
         console.log('[App] Sync manager no inicializado (faltan credenciales Supabase)');
       }
       
-      // 3. Solicitar permisos de notificaciones
+      // 2. Solicitar permisos de notificaciones
       const notificationGranted = await requestPermissions();
       
       if (notificationGranted) {
-        // 4. Programar tip diario del coach (9:00 AM)
+        // 3. Programar tip diario del coach (9:00 AM)
         await scheduleDailyCoachTip(9, 0);
         
         if (config.env.DEBUG_MODE) {
@@ -111,14 +98,14 @@ export default function App() {
         }
       }
 
-      // 5. Registrar background sync
+      // 4. Registrar background sync
       await registerBackgroundSync();
       
       if (config.env.DEBUG_MODE) {
         console.log('[App] Background sync registrado');
       }
 
-      // 6. Configurar listeners de notificaciones (seguro para Expo Go)
+      // 5. Configurar listeners de notificaciones (seguro para Expo Go)
       cleanupListenersRef.current = setupNotificationListeners({
         onNotificationReceived: (notification) => {
           if (config.env.DEBUG_MODE) {
@@ -133,7 +120,7 @@ export default function App() {
         },
       });
 
-      // 7. Listener para cambios de estado de la app
+      // 6. Listener para cambios de estado de la app
       const subscription = AppState.addEventListener('change', handleAppStateChange);
       
       return () => {
@@ -209,7 +196,7 @@ export default function App() {
   // Renderizar app normal si config es válida
   return (
     <SafeAreaProvider>
-      <AppNavigator />
+      <RootNavigator />
     </SafeAreaProvider>
   );
 }

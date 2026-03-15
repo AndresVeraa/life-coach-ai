@@ -18,7 +18,7 @@ import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useScheduleStore, SCHEDULE_COLORS } from '../store/schedule.store';
 import type { ScheduleBlock, BlockNote } from '../store/schedule.store';
-import { useTasksStore, PRIORITY_CONFIG as TASK_PRIORITY, CATEGORY_CONFIG, timeToDecimal } from '../store/tasks.store';
+import { useTasksStore, PRIORITY_CONFIG as TASK_PRIORITY, CATEGORY_CONFIG, timeToDecimal } from '@/features/tasks/tasks.store';
 import { useHealthStore } from '../features/health/health.store';
 import { useClasesParaTimeline, ClaseTimeline, useUniversityStats, useProximaClase, ClaseHoy } from '../features/agenda/hooks/useClasesHoy';
 import { useUniversityStore, useDaysUntilNextEvaluation } from '../features/agenda/university.store';

@@ -38,6 +38,7 @@ interface AuthState {
   user: AuthUser | null;
   session: Session | null;
   tokens: AuthTokens | null;
+  isAuthenticated: boolean;
   isLoading: boolean;
   isSigningUp: boolean;
   isRefreshing: boolean;
@@ -163,6 +164,80 @@ const extractTokensFromSession = (session: Session): AuthTokens => {
   };
 };
 
+/**
+ * Limpiar stores de dominio al cerrar sesión.
+ * Preserva preferencias de salud (targetWakeTime/targetBedTime/alarmas).
+ */
+const clearDomainStoresOnLogout = async (): Promise<void> => {
+  const config = getConfig();
+  const keysToRemove = [
+    'tasks-storage',
+    'tasks-pro-v2-storage',
+    'coach-chat-v2-storage',
+    'analytics-store',
+    'audit-analytics-v2-storage',
+    'university-storage',
+  ];
+
+  try {
+    await Promise.all(keysToRemove.map((key) => AsyncStorage.removeItem(key)));
+
+    // Limpieza selectiva de health (preservar preferencias)
+    const healthKey = 'health-v3-storage';
+    const raw = await AsyncStorage.getItem(healthKey);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      const state = parsed?.state ?? parsed;
+
+      const preserved = {
+        targetWakeTime: state?.targetWakeTime ?? '07:00',
+        targetBedTime: state?.targetBedTime ?? '23:00',
+        wakeAlarmEnabled: state?.wakeAlarmEnabled ?? false,
+        bedAlarmEnabled: state?.bedAlarmEnabled ?? false,
+      };
+
+      const cleanedState = {
+        ...state,
+        sleepRecords: [],
+        records: [],
+        sleepLogs: [],
+        last7Days: [],
+        sleepStats: {
+          weeklyAverage: 0,
+          monthlyAverage: 0,
+          bestStreak: 0,
+          currentStreak: 0,
+          totalRecords: 0,
+          sleepDebt: 0,
+          trendDirection: 'estable',
+        },
+        metrics: {
+          averageSleep: 0,
+          consecutiveDays: 0,
+          bestDay: 0,
+          worstDay: 0,
+          goalMet: false,
+          lastRecordDate: null,
+          totalRecordsMonth: 0,
+        },
+        ...preserved,
+      };
+
+      const nextRaw = parsed?.state
+        ? JSON.stringify({ ...parsed, state: cleanedState })
+        : JSON.stringify(cleanedState);
+
+      await AsyncStorage.setItem(healthKey, nextRaw);
+    }
+
+    if (config.env.DEBUG_MODE) {
+      console.log('[Auth] Stores de dominio limpiados (preferencias preservadas)');
+    }
+  } catch (err) {
+    console.error('[Auth] Error limpiando stores en logout:', err);
+  }
+};
+
 // ============================================
 // STORE
 // ============================================
@@ -177,6 +252,7 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       session: null,
       tokens: null,
+      isAuthenticated: false,
       isLoading: true,
       isSigningUp: false,
       isRefreshing: false,
@@ -287,6 +363,7 @@ export const useAuthStore = create<AuthState>()(
                 user: null,
                 session: null,
                 tokens: null,
+                isAuthenticated: false,
                 error: 'SESSION_EXPIRED',
               });
             }
@@ -307,6 +384,7 @@ export const useAuthStore = create<AuthState>()(
             set({
               session: data.session,
               tokens: newTokens,
+              isAuthenticated: true,
               error: null,
             });
 
@@ -344,7 +422,7 @@ export const useAuthStore = create<AuthState>()(
             }
 
             // Establecer tokens temporalmente
-            set({ tokens: storedTokens });
+            set({ tokens: storedTokens, isAuthenticated: true });
 
             // Verificar si los tokens son válidos refrescando
             const isValid = await get().refreshSessionIfNeeded();
@@ -370,7 +448,7 @@ export const useAuthStore = create<AuthState>()(
                   created_at: authUser.created_at || new Date().toISOString(),
                 };
 
-                set({ user, error: null });
+                set({ user, isAuthenticated: true, error: null });
                 
                 if (config.env.DEBUG_MODE) {
                   console.log('[Auth] Inicialización completa:', user.email);
@@ -385,11 +463,11 @@ export const useAuthStore = create<AuthState>()(
             console.log('[Auth] No hay sesión activa');
           }
           
-          set({ user: null, session: null, tokens: null });
+          set({ user: null, session: null, tokens: null, isAuthenticated: false });
         } catch (err) {
           const message = err instanceof AuthError ? err.message : 'Error inicializando sesión';
           console.error('[Auth] Initialize error:', message);
-          set({ error: message, user: null, session: null, tokens: null });
+          set({ error: message, user: null, session: null, tokens: null, isAuthenticated: false });
         } finally {
           set({ isLoading: false });
         }
@@ -439,7 +517,7 @@ export const useAuthStore = create<AuthState>()(
               created_at: data.session.user.created_at || new Date().toISOString(),
             };
 
-            set({ user, session: data.session, tokens, error: null });
+            set({ user, session: data.session, tokens, isAuthenticated: true, error: null });
             
             if (config.env.DEBUG_MODE) {
               console.log('[Auth] Login exitoso:', user.email);
@@ -458,7 +536,7 @@ export const useAuthStore = create<AuthState>()(
                 : 'Error al iniciar sesión';
 
           console.error('[Auth] Login error:', message);
-          set({ error: message });
+          set({ error: message, isAuthenticated: false });
           return { success: false, error: message };
         } finally {
           set({ isLoading: false });
@@ -523,7 +601,7 @@ export const useAuthStore = create<AuthState>()(
                 created_at: data.user.created_at || new Date().toISOString(),
               };
 
-              set({ user, session: data.session, tokens, error: null });
+              set({ user, session: data.session, tokens, isAuthenticated: true, error: null });
               
               if (config.env.DEBUG_MODE) {
                 console.log('[Auth] Signup exitoso:', user.email);
@@ -549,7 +627,7 @@ export const useAuthStore = create<AuthState>()(
                 : 'Error al registrarse';
 
           console.error('[Auth] Signup error:', message);
-          set({ error: message });
+          set({ error: message, isAuthenticated: false });
           return { success: false, error: message };
         } finally {
           set({ isSigningUp: false });
@@ -579,7 +657,10 @@ export const useAuthStore = create<AuthState>()(
           // Siempre limpiar tokens locales
           await clearTokensFromSecureStore();
 
-          set({ user: null, session: null, tokens: null, error: null });
+          // Limpiar stores de dominio (con preferencias de health preservadas)
+          await clearDomainStoresOnLogout();
+
+          set({ user: null, session: null, tokens: null, isAuthenticated: false, error: null });
           
           if (config.env.DEBUG_MODE) {
             console.log('[Auth] Logout completo');
@@ -590,7 +671,8 @@ export const useAuthStore = create<AuthState>()(
           
           // Aún así limpiar estado local
           await clearTokensFromSecureStore();
-          set({ user: null, session: null, tokens: null, error: message });
+          await clearDomainStoresOnLogout();
+          set({ user: null, session: null, tokens: null, isAuthenticated: false, error: message });
         } finally {
           set({ isLoading: false });
         }
@@ -662,8 +744,8 @@ export const useAuthStore = create<AuthState>()(
  * Helper: Check if user is authenticated
  */
 export const isUserAuthenticated = (): boolean => {
-  const { user, session, tokens } = useAuthStore.getState();
-  return !!(user && (session || tokens));
+  const { isAuthenticated, user, session, tokens } = useAuthStore.getState();
+  return isAuthenticated || !!(user && (session || tokens));
 };
 
 /**

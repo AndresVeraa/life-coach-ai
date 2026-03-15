@@ -15,6 +15,7 @@ export const useAuth = () => {
   const {
     user,
     session,
+    isAuthenticated,
     isLoading,
     isSigningUp,
     error,
@@ -38,7 +39,7 @@ export const useAuth = () => {
     isLoading,
     isSigningUp,
     error,
-    isAuthenticated: !!user && !!session,
+    isAuthenticated,
 
     // Métodos
     login,

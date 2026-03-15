@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { sendMessageToGemini, ToolCall } from '@/services/api/geminiService';
-import { useTasksStore } from '@/store/tasks.store';
+import { useTasksStore } from '@/features/tasks/tasks.store';
 import { useScheduleStore, SCHEDULE_COLORS } from '@/store/schedule.store';
 
 // --- Types ---

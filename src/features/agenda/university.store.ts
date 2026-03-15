@@ -28,7 +28,7 @@ import {
   calculateDurationHours,
 } from '@/types/university.types';
 import { useScheduleStore, ScheduleBlock } from '@/store/schedule.store';
-import { useTasksStore, Task } from '@/store/tasks.store';
+import { useTasksStore, Task } from '@/features/tasks/tasks.store';
 
 // ============================================
 // TIPOS DEL STORE
